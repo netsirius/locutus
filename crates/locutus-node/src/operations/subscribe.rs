@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::operations::subscribe::SubscribeState::AwaitingResponse;
 use crate::{
     config::PEER_TIMEOUT,
     conn_manager::{ConnectionBridge, PeerKey},
@@ -10,7 +11,6 @@ use crate::{
     node::OpManager,
     ring::{PeerKeyLocation, RingError},
 };
-use crate::operations::subscribe::SubscribeState::AwaitingResponse;
 
 use super::{
     handle_op_result,
@@ -425,10 +425,10 @@ mod messages {
 
 #[cfg(test)]
 mod test {
-    use crate::{conn_manager::PeerKey, node::SimStorageError};
+    use super::*;
     use crate::contract::Contract;
     use crate::ring::Location;
-    use super::*;
+    use crate::{conn_manager::PeerKey, node::SimStorageError};
 
     #[test]
     fn successful_subscribe_op_seq() -> Result<(), anyhow::Error> {
@@ -443,15 +443,15 @@ mod test {
         let key = contract.clone().key();
 
         let mut requester = SubscribeOp::start_op(key).sm;
-        let mut target =
-            StateMachine::<SubscribeOpSM>::from_state(SubscribeState::ReceivedRequest);
+        let mut target = StateMachine::<SubscribeOpSM>::from_state(SubscribeState::ReceivedRequest);
 
         // requester.consume_to_state();
-        let _req_msg =
-            requester.consume_to_output::<OpError<SimStorageError>>(SubscribeMsg::FetchRouting {
+        let _req_msg = requester.consume_to_output::<OpError<SimStorageError>>(
+            SubscribeMsg::FetchRouting {
                 id: id,
-                target: target_loc
-            })?;
+                target: target_loc,
+            },
+        )?;
 
         // assert_eq!(req_msg, expected);
         assert_eq!(
