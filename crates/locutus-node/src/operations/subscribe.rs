@@ -114,7 +114,7 @@ impl StateMachineImpl for SubscribeOpSm {
                     key,
                     target,
                     subscriber,
-                    found: true
+                    found: true,
                 },
             ) => {
                 log::info!(
@@ -282,23 +282,22 @@ where
                 log::info!("Contract {} not found while processing info", key);
                 log::info!("Trying to found the contract from another node");
                 let initial_htl = op_storage.ring.max_hops_to_live + 1;
-                let closest_node = op_storage.ring.closest_caching(
-                    &key,
-                    initial_htl,
-                    &[]
-                )[0];
+                let closest_node = op_storage.ring.closest_caching(&key, initial_htl, &[])[0];
 
                 // Retry seek node when the contract to subscribe has not been found in this node
-                conn_manager.send(
-                    closest_node,
-                  (SubscribeMsg::SeekNode {
-                        id,
-                        key,
-                        subscriber,
-                        target,
-                        found
-                  }).into(),
-                ).await?;
+                conn_manager
+                    .send(
+                        closest_node,
+                        (SubscribeMsg::SeekNode {
+                            id,
+                            key,
+                            subscriber,
+                            target,
+                            found,
+                        })
+                        .into(),
+                    )
+                    .await?;
                 return_msg = state
                     .sm
                     .consume_to_output(SubscribeMsg::SeekNode {
@@ -306,7 +305,7 @@ where
                         key,
                         target,
                         subscriber,
-                        found: false
+                        found: false,
                     })?
                     .map(Message::from);
                 new_state = Some(state);
@@ -323,7 +322,7 @@ where
                         key,
                         target,
                         subscriber,
-                        found: true
+                        found: true,
                     })?
                     .map(Message::from);
             }
@@ -362,7 +361,7 @@ where
                         key,
                         subscriber,
                         target,
-                        found: true
+                        found: true,
                     }));
                     new_state = Some(state);
                 } else {
@@ -424,6 +423,7 @@ mod messages {
             key: ContractKey,
             target: PeerKeyLocation,
             subscriber: PeerKeyLocation,
+            found: bool
         },
         ReturnSub {
             id: Transaction,
@@ -511,7 +511,7 @@ mod test {
                 key: key,
                 target: target_loc,
                 subscriber: requester_loc,
-                found: true
+                found: true,
             })?
             .ok_or(anyhow::anyhow!("no output"))?;
 
@@ -540,7 +540,7 @@ mod test {
             key,
             target: next_target_loc,
             subscriber: requester_loc,
-            found: false
+            found: false,
         })?;
 
         assert_eq!(
