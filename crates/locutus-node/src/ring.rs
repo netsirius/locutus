@@ -17,8 +17,10 @@ use std::{
     fmt::Display,
     hash::Hasher,
     sync::atomic::{AtomicU64, Ordering::SeqCst},
+    time::Instant,
 };
 
+use anyhow::bail;
 use dashmap::{mapref::one::Ref as DmRef, DashMap, DashSet};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -29,7 +31,7 @@ use crate::{
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-/// The Location of a peer in the ring. This location allows routing towards the peer.
+/// The location of a peer in the ring. This location allows routing towards the peer.
 pub(crate) struct PeerKeyLocation {
     pub peer: PeerKey,
     /// An unspecified location means that the peer hasn't been asigned a location, yet.
@@ -42,12 +44,12 @@ pub(crate) struct PeerKeyLocation {
 pub(crate) struct Ring {
     pub rnd_if_htl_above: usize,
     pub max_hops_to_live: usize,
-    pub connections_by_location: RwLock<BTreeMap<Location, PeerKeyLocation>>,
+    max_connections: usize,
+    pub peer_key: PeerKey,
+    connections_by_location: RwLock<BTreeMap<Location, PeerKeyLocation>>,
     /// contracts in the ring cached by this node
     cached_contracts: DashSet<ContractKey>,
-    // TODO: optimize this for an AtomicU64
     own_location: AtomicU64,
-    assigned_key: PeerKey,
     /// The container for subscriber is a vec instead of something like a hashset
     /// that would allow for blind inserts of duplicate peers subscribing because
     /// of data locality, since we are likely to end up iterating over the whole sequence
@@ -55,32 +57,48 @@ pub(crate) struct Ring {
     /// then is more optimal to just use a vector for it's compact memory layout.
     subscribers: DashMap<ContractKey, Vec<PeerKeyLocation>>,
     subscriptions: RwLock<Vec<ContractKey>>,
+    /// A peer which has been blacklisted to perform actions regarding a given contract.
+    contract_blacklist: DashMap<ContractKey, Vec<Blacklisted>>,
+}
+
+/// A data type that represents the fact that a peer has been blacklisted
+/// for some action. Has to be coupled with that action
+#[derive(Debug)]
+struct Blacklisted {
+    since: Instant,
+    peer: PeerKey,
 }
 
 impl Ring {
     const MIN_CONNECTIONS: usize = 10;
+
     const MAX_CONNECTIONS: usize = 20;
+
     /// Max number of subscribers for a contract.
-    pub const MAX_SUBSCRIBERS: usize = 10;
+    const MAX_SUBSCRIBERS: usize = 10;
 
     /// Above this number of remaining hops,
     /// randomize which of node a message which be forwarded to.
-    pub const RAND_WALK_ABOVE_HTL: usize = 7;
+    const RAND_WALK_ABOVE_HTL: usize = 7;
 
-    pub const MAX_HOPS_TO_LIVE: usize = 10;
+    /// Max hops to be performed for certain operations (e.g. propagating
+    /// connection of a peer in the network).
+    const MAX_HOPS_TO_LIVE: usize = 10;
 
-    pub fn new(peer: PeerKey) -> Self {
+    pub fn new(key: PeerKey) -> Self {
         // for location here consider -1 == None
         let own_location = AtomicU64::new(u64::from_le_bytes((-1f64).to_le_bytes()));
         Ring {
             rnd_if_htl_above: Self::RAND_WALK_ABOVE_HTL,
             max_hops_to_live: Self::MAX_HOPS_TO_LIVE,
+            max_connections: Self::MAX_CONNECTIONS,
             connections_by_location: RwLock::new(BTreeMap::new()),
             cached_contracts: DashSet::new(),
             own_location,
-            assigned_key: peer,
+            peer_key: key,
             subscribers: DashMap::new(),
             subscriptions: RwLock::new(Vec::new()),
+            contract_blacklist: DashMap::new(),
         }
     }
 
@@ -96,6 +114,11 @@ impl Ring {
         self
     }
 
+    pub fn with_max_connections(&mut self, connections: usize) -> &mut Self {
+        self.max_connections = connections;
+        self
+    }
+
     #[inline(always)]
     /// Return if a location is within appropiate caching distance.
     pub fn within_caching_distance(&self, _loc: &Location) -> bool {
@@ -106,8 +129,9 @@ impl Ring {
         true
     }
 
+    /// Whether this node already has this contract cached or not.
     #[inline]
-    pub fn has_contract(&self, key: &ContractKey) -> bool {
+    pub fn contract_exists(&self, key: &ContractKey) -> bool {
         self.cached_contracts.contains(key)
     }
 
@@ -125,13 +149,13 @@ impl Ring {
     /// Returns this node location in the ring, if any (must have join the ring already).
     pub fn own_location(&self) -> PeerKeyLocation {
         let location = f64::from_le_bytes(self.own_location.load(SeqCst).to_le_bytes());
-        let location = if location == -1f64 {
+        let location = if (location - -1f64).abs() < f64::EPSILON {
             None
         } else {
             Some(Location(location))
         };
         PeerKeyLocation {
-            peer: self.assigned_key,
+            peer: self.peer_key,
             location,
         }
     }
@@ -144,7 +168,7 @@ impl Ring {
             false
         } else if cbl.len() < Self::MIN_CONNECTIONS {
             true
-        } else if cbl.len() >= Self::MAX_CONNECTIONS {
+        } else if cbl.len() >= self.max_connections {
             false
         } else {
             my_location.distance(location) < self.median_distance_to(my_location)
@@ -238,11 +262,15 @@ impl Ring {
     ) -> Option<DmRef<ContractKey, Vec<PeerKeyLocation>>> {
         self.subscribers.get(contract)
     }
+
+    pub fn num_connections(&self) -> usize {
+        self.connections_by_location.read().len()
+    }
 }
 
 /// An abstract location on the 1D ring, represented by a real number on the interal [0, 1]
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
-pub struct Location(f64);
+pub struct Location(pub(crate) f64);
 
 pub(crate) type Distance = Location;
 
@@ -321,11 +349,11 @@ impl std::hash::Hash for Location {
 }
 
 impl TryFrom<f64> for Location {
-    type Error = ();
+    type Error = anyhow::Error;
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
         if !(0.0..=1.0).contains(&value) {
-            Err(())
+            bail!("expected a value between 0.0 and 1.0, received {}", value)
         } else {
             Ok(Location(value))
         }

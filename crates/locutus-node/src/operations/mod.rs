@@ -1,3 +1,5 @@
+use tokio::sync::mpsc::error::SendError;
+
 use crate::{
     conn_manager::{self, ConnectionBridge},
     contract::ContractError,
@@ -39,7 +41,7 @@ where
             return Ok(());
         }
         Err((err, tx_id)) => {
-            log::error!("error while processing join request: {}", err);
+            log::error!("error while processing request: {}", err);
             if let Some(sender) = sender {
                 conn_manager.send(sender, Message::Canceled(tx_id)).await?;
             }
@@ -52,7 +54,7 @@ where
             // updated op
             let id = *msg.id();
             if let Some(target) = msg.target() {
-                conn_manager.send(target.clone(), msg).await?;
+                conn_manager.send(*target, msg).await?;
             }
             op_storage.push(id, updated_state)?;
         }
@@ -62,7 +64,7 @@ where
         }) => {
             // finished the operation at this node, informing back
             if let Some(target) = msg.target() {
-                conn_manager.send(target.clone(), msg).await?;
+                conn_manager.send(*target, msg).await?;
             }
         }
         Ok(OperationResult {
@@ -71,7 +73,7 @@ where
         }) => {
             // operation finished_completely
         }
-        _ => return Err(OpError::IllegalStateTransition),
+        _ => return Err(OpError::InvalidStateTransition),
     }
     Ok(())
 }
@@ -82,9 +84,6 @@ pub(crate) enum Operation {
     Get(get::GetOp),
     Subscribe(subscribe::SubscribeOp),
 }
-
-#[derive(Debug, Default)]
-pub struct ProbeOp;
 
 #[allow(unused)]
 #[derive(Debug, thiserror::Error)]
@@ -97,9 +96,9 @@ pub(crate) enum OpError<S: std::error::Error> {
     ContractError(#[from] ContractError<S>),
 
     #[error("cannot perform a state transition from the current state with the provided input")]
-    IllegalStateTransition,
+    InvalidStateTransition,
     #[error("failed notifying back to the node message loop, channel closed")]
-    NotificationError(#[from] tokio::sync::mpsc::error::SendError<Message>),
+    NotificationError(#[from] Box<SendError<Message>>),
     #[error("unspected transaction type, trying to get a {0:?} from a {1:?}")]
     IncorrectTxType(TransactionType, TransactionType),
     #[error("failed while processing transaction {0}")]
@@ -118,4 +117,13 @@ pub(crate) enum OpError<S: std::error::Error> {
     /// broadcasting is required
     #[error("broadcast completed for tx")]
     BroadcastCompleted,
+}
+
+impl<S> From<SendError<Message>> for OpError<S>
+where
+    S: std::error::Error,
+{
+    fn from(err: SendError<Message>) -> OpError<S> {
+        OpError::NotificationError(Box::new(err))
+    }
 }

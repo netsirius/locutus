@@ -34,7 +34,7 @@ impl Config {
     pub fn load_conf() -> Result<Config, ()> {
         let mut settings = config::Config::new();
         settings
-            .merge(config::Environment::with_prefix("FREENET"))
+            .merge(config::Environment::with_prefix("LOCUTUS"))
             .unwrap();
 
         let local_peer_keypair =
@@ -58,7 +58,7 @@ impl Config {
             bootstrap_port,
             bootstrap_id,
             local_peer_keypair,
-            log_level: settings.get("log_level").unwrap_or(log::LevelFilter::Debug),
+            log_level: settings.get("log_level").unwrap_or(log::LevelFilter::Info),
         })
     }
 

@@ -161,6 +161,7 @@ mod test {
     use crate::{
         config::tracing::Logger,
         node::{test_utils::get_free_port, InitPeerNode},
+        ring::Location,
     };
 
     use libp2p::{futures::StreamExt, swarm::SwarmEvent};
@@ -192,15 +193,15 @@ mod test {
         let peer1_key = Keypair::generate_ed25519();
         let peer1_id: PeerId = peer1_key.public().into();
         let peer1_port = get_free_port().unwrap();
-        let peer1_config = InitPeerNode::new()
+        let peer1_config = InitPeerNode::new(peer1_id, Location::random())
             .listening_ip(Ipv4Addr::LOCALHOST)
-            .listening_port(peer1_port)
-            .with_identifier(peer1_id);
+            .listening_port(peer1_port);
 
         // Start up the initial node.
         GlobalExecutor::spawn(async move {
             log::debug!("Initial peer port: {}", peer1_port);
-            let config = NodeConfig::default()
+            let mut config = NodeConfig::default();
+            config
                 .with_ip(Ipv4Addr::LOCALHOST)
                 .with_port(peer1_port)
                 .with_key(peer1_key);

@@ -4,7 +4,7 @@ use crate::{
     config::PEER_TIMEOUT,
     conn_manager::{ConnectionBridge, PeerKey},
     contract::{ContractError, ContractHandlerEvent, ContractKey, StoreResponse},
-    message::{GetTxType, Message, Transaction},
+    message::{Message, Transaction, TxType},
     node::OpManager,
     ring::{PeerKeyLocation, RingError},
 };
@@ -18,7 +18,7 @@ use super::{
 pub(crate) use self::messages::GetMsg;
 
 pub(crate) struct GetOp {
-    sm: StateMachine<GetOpSM>,
+    sm: StateMachine<GetOpSm>,
     _ttl: Duration,
 }
 
@@ -26,8 +26,8 @@ impl GetOp {
     /// Maximum number of retries to get values.
     const MAX_RETRIES: usize = 10;
 
-    pub fn start_op(key: ContractKey, fetch_contract: bool) -> Self {
-        let id = Transaction::new(<GetMsg as GetTxType>::tx_type_id());
+    pub fn start_op(key: ContractKey, fetch_contract: bool, id: &PeerKey) -> Self {
+        let id = Transaction::new(<GetMsg as TxType>::tx_type_id(), id);
         let sm = StateMachine::from_state(GetState::PrepareRequest {
             key,
             id,
@@ -40,16 +40,16 @@ impl GetOp {
     }
 }
 
-struct GetOpSM;
+struct GetOpSm;
 
-impl StateMachineImpl for GetOpSM {
+impl StateMachineImpl for GetOpSm {
     type Input = GetMsg;
 
     type State = GetState;
 
     type Output = GetMsg;
 
-    fn state_transition(state: &Self::State, input: &Self::Input) -> Option<Self::State> {
+    fn state_transition(state: &mut Self::State, input: &mut Self::Input) -> Option<Self::State> {
         match (state, input) {
             // states of the requester
             (GetState::PrepareRequest { fetch_contract, .. }, GetMsg::FetchRouting { .. }) => {
@@ -60,7 +60,10 @@ impl StateMachineImpl for GetOpSM {
                 })
             }
             (
-                GetState::AwaitingResponse { .. },
+                GetState::AwaitingResponse {
+                    fetch_contract: false,
+                    ..
+                },
                 GetMsg::ReturnGet {
                     key,
                     value: StoreResponse { value: Some(_), .. },
@@ -70,8 +73,50 @@ impl StateMachineImpl for GetOpSM {
                 log::debug!("Get response received for contract {}", key);
                 Some(GetState::Completed)
             }
-            // states of the petitioner
-            (GetState::ReceiveRequest, GetMsg::ReturnGet { .. }) => Some(GetState::Completed),
+            (
+                GetState::AwaitingResponse {
+                    fetch_contract: true,
+                    ..
+                },
+                GetMsg::ReturnGet {
+                    key,
+                    value:
+                        StoreResponse {
+                            value: Some(_),
+                            contract: Some(_),
+                            ..
+                        },
+                    ..
+                },
+            ) => {
+                log::debug!("Get response received for contract {}", key);
+                Some(GetState::Completed)
+            }
+            (
+                GetState::AwaitingResponse {
+                    fetch_contract: true,
+                    ..
+                },
+                GetMsg::ReturnGet {
+                    key,
+                    value:
+                        StoreResponse {
+                            value: Some(_),
+                            contract: None,
+                            ..
+                        },
+                    ..
+                },
+            ) => {
+                log::error!(
+                    "Get response received for contract {}, but the contract wasn't returned!",
+                    key
+                );
+                // error out, should not be possible
+                None
+            }
+            // states of the receiver
+            (GetState::ReceivedRequest, GetMsg::ReturnGet { .. }) => Some(GetState::Completed),
             _ => None,
         }
     }
@@ -132,7 +177,7 @@ impl StateMachineImpl for GetOpSM {
                 fetch_contract,
             }),
             (
-                GetState::ReceiveRequest,
+                GetState::ReceivedRequest,
                 GetMsg::ReturnGet {
                     id,
                     key,
@@ -152,7 +197,7 @@ impl StateMachineImpl for GetOpSM {
 
 enum GetState {
     /// A new petition for a get op.
-    ReceiveRequest,
+    ReceivedRequest,
     /// Preparing request for get op.
     PrepareRequest {
         key: ContractKey,
@@ -191,7 +236,7 @@ where
             *id,
         )
     } else {
-        return Err(OpError::IllegalStateTransition);
+        return Err(OpError::InvalidStateTransition);
     };
     if let Some(req_get) = get_op
         .sm
@@ -227,7 +272,7 @@ where
             sender = get_op.sender().cloned();
             // new request to get a value for a contract, initialize the machine
             let machine = GetOp {
-                sm: StateMachine::from_state(GetState::ReceiveRequest),
+                sm: StateMachine::from_state(GetState::ReceivedRequest),
                 _ttl: PEER_TIMEOUT,
             };
             update_state(conn_manager, machine, get_op, op_storage).await
@@ -283,10 +328,10 @@ where
             ..
         } => {
             let sender = op_storage.ring.own_location();
-            if !op_storage.ring.has_contract(&key) {
+            if !op_storage.ring.contract_exists(&key) {
                 //FIXME: should try forward to someone else who may have it first
                 // this node does not have the contract, return a void result to the requester
-                log::info!("Contract {} not found while processing a get request", key);
+                log::warn!("Contract {} not found while processing a get request", key);
                 return Ok(OperationResult {
                     return_msg: Some(Message::from(GetMsg::ReturnGet {
                         key,
@@ -312,14 +357,24 @@ where
                 .await?
             {
                 if returned_key != key {
-                    return Err(OpError::IllegalStateTransition);
+                    // shouldn't be a reachable path
+                    log::error!(
+                        "contract retrieved ({}) and asked ({}) are not the same",
+                        returned_key,
+                        key
+                    );
+                    return Err(OpError::InvalidStateTransition);
                 }
 
                 match &value {
                     Ok(StoreResponse {
-                        value: Some(_),
+                        value: None,
                         contract: None,
                     }) => return Err(ContractError::ContractNotFound(key).into()),
+                    Ok(StoreResponse {
+                        value: Some(_),
+                        contract: None,
+                    }) if fetch_contract => return Err(ContractError::ContractNotFound(key).into()),
                     _ => {}
                 }
 
@@ -334,7 +389,7 @@ where
                     .map(Message::from);
                 new_state = Some(state);
             } else {
-                return Err(OpError::IllegalStateTransition);
+                return Err(OpError::InvalidStateTransition);
             }
         }
         GetMsg::ReturnGet {
@@ -348,7 +403,7 @@ where
             sender,
             ..
         } => {
-            log::info!(
+            log::warn!(
                 "Contract value for {} not available from peer {}, retrying with other peers.",
                 sender.peer,
                 key
@@ -389,10 +444,76 @@ where
                     return Err(RingError::NoCachingPeers(key).into());
                 }
             } else {
-                return Err(OpError::IllegalStateTransition);
+                return Err(OpError::InvalidStateTransition);
             }
         }
-        _ => return Err(OpError::IllegalStateTransition),
+        GetMsg::ReturnGet {
+            key,
+            value:
+                StoreResponse {
+                    value: Some(value),
+                    contract,
+                },
+            id,
+            sender,
+        } => {
+            let require_contract = matches!(
+                state.sm.state(),
+                GetState::AwaitingResponse {
+                    fetch_contract: true,
+                    ..
+                }
+            );
+
+            // received a response with a contract value
+            if require_contract {
+                if let Some(contract) = &contract {
+                    // store contract first
+                    op_storage
+                        .notify_contract_handler(ContractHandlerEvent::Cache(contract.clone()))
+                        .await?;
+                } else {
+                    // no contract, consider this like an error ignoring the incoming update value
+                    op_storage
+                        .notify_change(
+                            Message::from(GetMsg::ReturnGet {
+                                id,
+                                key,
+                                value: StoreResponse {
+                                    value: None,
+                                    contract: None,
+                                },
+                                sender,
+                            }),
+                            Operation::Get(state),
+                        )
+                        .await?;
+                    return Err(OpError::StatePushed);
+                }
+            }
+
+            op_storage
+                .notify_contract_handler(ContractHandlerEvent::PushQuery {
+                    key,
+                    value: value.clone(),
+                })
+                .await?;
+
+            return_msg = state
+                .sm
+                .consume_to_output(GetMsg::ReturnGet {
+                    key,
+                    value: StoreResponse {
+                        value: Some(value),
+                        contract,
+                    },
+                    id,
+                    sender,
+                })?
+                .map(Message::from);
+            new_state = None;
+        }
+        _ => return Err(OpError::InvalidStateTransition),
     }
     Ok(OperationResult {
         return_msg,
@@ -469,10 +590,61 @@ mod messages {
 
 #[cfg(test)]
 mod test {
+    use crate::{
+        contract::{Contract, ContractValue},
+        node::SimStorageError,
+        ring::Location,
+    };
+
     use super::*;
+
+    type Err = OpError<SimStorageError>;
 
     #[test]
     fn successful_get_op_seq() -> Result<(), anyhow::Error> {
-        anyhow::bail!("test not impl")
+        let requester = PeerKey::random();
+        let id = Transaction::new(<GetMsg as TxType>::tx_type_id(), &requester);
+        let bytes = crate::test_utils::random_bytes_1024();
+        let mut gen = arbitrary::Unstructured::new(&bytes);
+        let contract: Contract = gen.arbitrary()?;
+        let target_loc = PeerKeyLocation {
+            location: Some(Location::random()),
+            peer: PeerKey::random(),
+        };
+
+        let mut requester = GetOp::start_op(contract.key(), true, &requester).sm;
+        let mut target = StateMachine::<GetOpSm>::from_state(GetState::ReceivedRequest);
+
+        let req_msg = requester
+            .consume_to_output::<Err>(GetMsg::FetchRouting {
+                id,
+                target: target_loc,
+            })?
+            .ok_or_else(|| anyhow::anyhow!("no msg"))?;
+        assert!(matches!(req_msg, GetMsg::RequestGet { .. }));
+        assert!(matches!(
+            requester.state(),
+            GetState::AwaitingResponse { .. }
+        ));
+
+        assert!(matches!(target.state(), GetState::ReceivedRequest));
+        let res_msg = target
+            .consume_to_output::<Err>(GetMsg::ReturnGet {
+                key: contract.key(),
+                id,
+                value: StoreResponse {
+                    contract: Some(contract),
+                    value: Some(ContractValue::new(b"abc".to_vec())),
+                },
+                sender: target_loc,
+            })?
+            .ok_or_else(|| anyhow::anyhow!("no msg"))?;
+        assert!(matches!(target.state(), GetState::Completed));
+        assert!(matches!(res_msg, GetMsg::ReturnGet { .. }));
+
+        let res_msg = requester.consume_to_output::<Err>(res_msg)?;
+        assert!(res_msg.is_none());
+
+        Ok(())
     }
 }

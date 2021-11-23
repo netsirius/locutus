@@ -45,7 +45,8 @@ where
 {
     rx: mpsc::UnboundedReceiver<InternalCHEvent<SErr>>,
     tx: mpsc::UnboundedSender<InternalCHEvent<SErr>>,
-    //TODO: change queue to btree once pop_first is stabilized
+    //TODO:  change queue to btree once pop_first is stabilized
+    // (https://github.com/rust-lang/rust/issues/62924)
     queue: VecDeque<(u64, ContractHandlerEvent<SErr>)>,
     _halve: PhantomData<End>,
 }
@@ -143,7 +144,7 @@ impl<SErr: std::error::Error> ContractHandlerChannel<SErr, CHListenerHalve> {
         if let Some((id, ev)) = self.queue.pop_front() {
             return Ok((EventId(id), ev));
         }
-        while let Some(msg) = self.rx.recv().await {
+        if let Some(msg) = self.rx.recv().await {
             return Ok((EventId(msg.id), msg.ev));
         }
         Err(ContractError::NoHandlerEvResponse)
@@ -192,10 +193,6 @@ where
     Cache(Contract),
     /// Result of a caching operation.
     CacheResult(Result<(), ContractError<Err>>),
-    /// Get a contract from the store.
-    FetchContract(ContractKey),
-    /// Result of fetching a contract.
-    FetchContractResult(Result<Option<Contract>, ContractError<Err>>),
 }
 
 #[cfg(test)]
@@ -245,6 +242,8 @@ mod sqlite {
     use once_cell::sync::Lazy;
     use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
+    use crate::contract::test_utils::MockRuntime;
+
     use super::*;
 
     // Is fine to clone this as it wraps by an Arc.
@@ -272,40 +271,46 @@ mod sqlite {
         RuntimeError(#[from] ContractUpdateError),
     }
 
-    pub(crate) struct SQLiteContractHandler {
+    pub(crate) struct SQLiteContractHandler<R> {
         channel: ContractHandlerChannel<DatabaseError, CHListenerHalve>,
         store: ContractStore,
+        runtime: R,
         pub(super) pool: SqlitePool,
     }
 
-    impl SQLiteContractHandler {
+    impl<R> SQLiteContractHandler<R>
+    where
+        R: ContractRuntime,
+    {
         pub fn new(
             channel: ContractHandlerChannel<DatabaseError, CHListenerHalve>,
             store: ContractStore,
-            pool: SqlitePool,
+            runtime: R,
         ) -> Self {
+            let pool = POOL.clone();
             SQLiteContractHandler {
                 channel,
                 store,
                 pool,
+                runtime,
             }
         }
     }
 
     impl From<ContractHandlerChannel<<Self as ContractHandler>::Error, CHListenerHalve>>
-        for SQLiteContractHandler
+        for SQLiteContractHandler<MockRuntime>
     {
         fn from(
             channel: ContractHandlerChannel<<Self as ContractHandler>::Error, CHListenerHalve>,
         ) -> Self {
             let store = ContractStore::new();
-            let pool = (&*POOL).clone();
-            SQLiteContractHandler::new(channel, store, pool)
+            let runtime = MockRuntime {};
+            SQLiteContractHandler::new(channel, store, runtime)
         }
     }
 
     #[async_trait::async_trait]
-    impl ContractHandler for SQLiteContractHandler {
+    impl ContractHandler for SQLiteContractHandler<MockRuntime> {
         type Error = DatabaseError;
 
         #[inline(always)]
@@ -346,7 +351,7 @@ mod sqlite {
                 Err(_) => value.clone(),
             };
 
-            let value: Vec<u8> = ContractRuntime::update_value(&*old_value, &value.0)?;
+            let value: Vec<u8> = self.runtime.update_value(&*old_value, &value.0)?;
             let encoded_key = hex::encode(contract.0);
             match sqlx::query(
                 "INSERT OR REPLACE INTO contracts (key, value) VALUES (?1, ?2)\
@@ -371,12 +376,16 @@ mod sqlite {
         use crate::contract::Contract;
 
         // Prepare and get handler for an in-memory sqlite db
-        async fn get_handler() -> Result<SQLiteContractHandler, sqlx::Error> {
+        async fn get_handler() -> Result<SQLiteContractHandler<MockRuntime>, sqlx::Error> {
             let (_, ch_handler) = contract_handler_channel();
-            let db_pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            let db_pool = SqlitePool::connect("sqlite::memory:").await?;
             let store: ContractStore = ContractStore::new();
             create_test_contracts_table(&db_pool).await;
-            Ok(SQLiteContractHandler::new(ch_handler, store, db_pool))
+            Ok(SQLiteContractHandler::new(
+                ch_handler,
+                store,
+                MockRuntime {},
+            ))
         }
 
         // Create test contracts table
@@ -392,44 +401,41 @@ mod sqlite {
             .unwrap();
         }
 
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn contract_handler() -> Result<(), anyhow::Error> {
             // Create a sqlite handler and initialize the database
-            let mut handler: SQLiteContractHandler = get_handler().await?;
+            let mut handler = get_handler().await?;
             create_test_contracts_table(&handler.pool).await;
 
             // Generate a contract
-            let contract_value: Vec<u8> = b"Test contract value".to_vec();
-            let contract: Contract = Contract::new(contract_value.clone());
+            let contract_bytes = b"Test contract value".to_vec();
+            let contract: Contract = Contract::new(contract_bytes.clone());
 
             // Get contract parts
-            let contract_key = ContractKey(contract.key);
-            let contract_value = ContractValue::new(contract_value);
-            let contract_value_cloned = contract_value.clone();
-
-            let put_result_value = handler.put_value(&contract_key, contract_value).await?;
+            let contract_value = ContractValue::new(contract_bytes.clone());
+            let put_result_value = handler
+                .put_value(&contract.key(), contract_value.clone())
+                .await?;
             let get_result_value = handler
-                .get_value(&contract_key)
+                .get_value(&contract.key())
                 .await?
-                .ok_or(anyhow::anyhow!("No value found"))?;
+                .ok_or_else(|| anyhow::anyhow!("No value found"))?;
 
-            assert_eq!(contract_value_cloned.0, put_result_value.0);
-            assert_eq!(contract_value_cloned.0, get_result_value.0);
-            assert_eq!(put_result_value.0, get_result_value.0);
+            assert_eq!(contract_value, put_result_value);
+            assert_eq!(contract_value, get_result_value);
 
             // Update the contract value with new one
-            let new_contract_value: Vec<u8> = b"New test contract value".to_vec();
-            let new_contract_value = ContractValue::new(new_contract_value);
-            let new_contract_value_cloned = new_contract_value.clone();
-            let new_put_result_value = handler.put_value(&contract_key, new_contract_value).await?;
+            let new_contract_value = ContractValue::new(b"New test contract value".to_vec());
+            let new_put_result_value = handler
+                .put_value(&contract.key(), new_contract_value.clone())
+                .await?;
             let new_get_result_value = handler
-                .get_value(&contract_key)
+                .get_value(&contract.key())
                 .await?
-                .ok_or(anyhow::anyhow!("No value found"))?;
+                .ok_or_else(|| anyhow::anyhow!("No value found"))?;
 
-            assert_eq!(new_contract_value_cloned.0, new_put_result_value.0);
-            assert_eq!(new_contract_value_cloned.0, new_get_result_value.0);
-            assert_eq!(new_put_result_value.0, new_get_result_value.0);
+            assert_eq!(new_contract_value, new_put_result_value);
+            assert_eq!(new_contract_value, new_get_result_value);
 
             Ok(())
         }

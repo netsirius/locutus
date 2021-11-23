@@ -12,6 +12,7 @@ use uuid::{
 };
 
 use crate::{
+    conn_manager::PeerKey,
     operations::{get::GetMsg, join_ring::JoinRingMsg, put::PutMsg, subscribe::SubscribeMsg},
     ring::{Location, PeerKeyLocation},
 };
@@ -39,17 +40,22 @@ pub(crate) struct Transaction {
 static UUID_CONTEXT: Context = Context::new(14);
 
 impl Transaction {
-    pub fn new(ty: TransactionTypeId) -> Transaction {
-        // using v1 UUID to keep to keep track of the creation ts so
+    pub fn new(ty: TransactionTypeId, initial_peer: &PeerKey) -> Transaction {
+        // using v1 UUID to keep to keep track of the creation ts
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("infallible");
         let now_secs = now.as_secs();
-        let now_nanos = now.as_nanos() - (now_secs as u128 * 1_000_000);
+        let now_nanos = now.as_nanos();
+        let now_nanos = now_nanos - (now_secs as u128 * 1_000_000_000);
         let ts = Timestamp::from_unix(&UUID_CONTEXT, now_secs, now_nanos as u32);
-        // this could be problematic on smartphones, will have to check/readdress eventually
-        let mac_addr = mac_address::get_mac_address().unwrap().unwrap();
-        let id = Uuid::new_v1(ts, mac_addr.bytes().as_ref()).unwrap();
+
+        // event in the net this UUID should be unique since peer keys are unique
+        // however some id collision may be theoretically possible if two transactions
+        // are created at the same exact time and the first 6 bytes of the key coincide;
+        // in practice the chance of this happening is astronomically low
+
+        let id = Uuid::new_v1(ts, &initial_peer.to_bytes()[0..6]).unwrap();
         // 2 word size for 64-bits platforms most likely since msg type
         // probably will be aligned to 64 bytes
         Self { id, ty }
@@ -67,11 +73,11 @@ impl Display for Transaction {
 }
 
 /// Get the transaction type associated to a given message type.
-pub(crate) trait GetTxType: sealed_msg_type::SealedTxType {
+pub(crate) trait TxType: sealed_msg_type::SealedTxType {
     fn tx_type_id() -> TransactionTypeId;
 }
 
-impl<T> GetTxType for T
+impl<T> TxType for T
 where
     T: sealed_msg_type::SealedTxType,
 {

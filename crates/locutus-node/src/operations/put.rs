@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use crate::{
     config::PEER_TIMEOUT,
-    conn_manager::ConnectionBridge,
+    conn_manager::{ConnectionBridge, PeerKey},
     contract::{Contract, ContractError, ContractHandlerEvent, ContractKey, ContractValue},
-    message::{GetTxType, Message, Transaction},
+    message::{Message, Transaction, TxType},
     node::OpManager,
     ring::{Location, PeerKeyLocation, RingError},
 };
@@ -23,20 +23,20 @@ use super::{
 };
 
 pub(crate) struct PutOp {
-    sm: StateMachine<PutOpSM>,
+    sm: StateMachine<PutOpSm>,
     /// time left until time out, when this reaches zero it will be removed from the state
     _ttl: Duration,
 }
 
 impl PutOp {
-    pub fn start_op(contract: Contract, value: ContractValue, htl: usize) -> Self {
+    pub fn start_op(contract: Contract, value: ContractValue, htl: usize, peer: &PeerKey) -> Self {
         log::debug!(
             "Requesting put to contract {} @ loc({})",
             contract.key(),
             Location::from(contract.key())
         );
 
-        let id = Transaction::new(<PutMsg as GetTxType>::tx_type_id());
+        let id = Transaction::new(<PutMsg as TxType>::tx_type_id(), peer);
         let sm = StateMachine::from_state(PutState::PrepareRequest {
             id,
             contract,
@@ -50,9 +50,9 @@ impl PutOp {
     }
 }
 
-struct PutOpSM;
+struct PutOpSm;
 
-impl StateMachineImpl for PutOpSM {
+impl StateMachineImpl for PutOpSm {
     type Input = PutMsg;
 
     type State = PutState;
@@ -60,6 +60,7 @@ impl StateMachineImpl for PutOpSM {
     type Output = PutMsg;
 
     fn state_transition_from_input(state: Self::State, input: Self::Input) -> Option<Self::State> {
+        // FIXME: receive broadcast msg when awaiting state
         match (state, input) {
             // state changed for the initial requesting node
             (PutState::AwaitingResponse { contract }, PutMsg::RequestPut { .. }) => {
@@ -73,7 +74,7 @@ impl StateMachineImpl for PutOpSM {
         }
     }
 
-    fn state_transition(state: &Self::State, input: &Self::Input) -> Option<Self::State> {
+    fn state_transition(state: &mut Self::State, input: &mut Self::Input) -> Option<Self::State> {
         match (state, input) {
             // state changed for the initial requesting node
             (PutState::PrepareRequest { contract, .. }, PutMsg::RouteValue { .. }) => {
@@ -104,10 +105,10 @@ impl StateMachineImpl for PutOpSM {
                 PutState::PrepareRequest {
                     contract,
                     value,
-                    id,
                     htl,
+                    ..
                 },
-                PutMsg::RouteValue { target, .. },
+                PutMsg::RouteValue { id, target, .. },
             ) => Some(PutMsg::RequestPut {
                 id,
                 contract,
@@ -191,7 +192,7 @@ where
     let key = if let PutState::PrepareRequest { contract, .. } = put_op.sm.state() {
         contract.key()
     } else {
-        return Err(OpError::IllegalStateTransition);
+        return Err(OpError::InvalidStateTransition);
     };
 
     // the initial request must provide:
@@ -214,7 +215,7 @@ where
             .notify_change(Message::from(req_put), Operation::Put(put_op))
             .await?;
     } else {
-        return Err(OpError::IllegalStateTransition);
+        return Err(OpError::InvalidStateTransition);
     }
     Ok(())
 }
@@ -301,7 +302,7 @@ where
             target,
         } => {
             let key = contract.key();
-            let cached_contract = op_storage.ring.has_contract(&key);
+            let cached_contract = op_storage.ring.contract_exists(&key);
             if !cached_contract && op_storage.ring.within_caching_distance(&key.location()) {
                 // this node does not have the contract, so instead store the contract and execute the put op.
                 op_storage
@@ -310,7 +311,8 @@ where
             } else if !cached_contract {
                 // in this case forward to a closer node to the target location and just wait for a response
                 // to give back to requesting peer
-                todo!()
+                // FIXME
+                log::warn!("Contract {} not found while processing info", key);
             }
 
             // after the contract has been cached, push the update query
@@ -343,7 +345,7 @@ where
             let broadcast_to = op_storage
                 .ring
                 .subscribers_of(&key)
-                .ok_or(ContractError::ContractNotFound(key).into())?
+                .ok_or(ContractError::ContractNotFound(key))?
                 .iter()
                 .cloned()
                 .collect();
@@ -353,16 +355,12 @@ where
                 target.location
             );
 
-            // add one because since is originating from this node and we don't want to
-            // reduce prematurely on the broadcasting instruction
-            let initial_htl = op_storage.ring.max_hops_to_live + 1;
             if let Some(msg) = state.sm.consume_to_state(PutMsg::Broadcasting {
                 id,
                 broadcast_to,
                 broadcasted_to: 0,
                 key,
                 new_value,
-                htl: initial_htl,
             })? {
                 op_storage
                     .notify_change(msg.into(), Operation::Put(state))
@@ -378,20 +376,13 @@ where
             mut broadcasted_to,
             key,
             new_value,
-            htl,
         } => {
-            let htl = if let Some(new_htl) = htl.checked_sub(1) {
-                new_htl
-            } else {
-                return Err(OpError::BroadcastCompleted);
-            };
             let sender = op_storage.ring.own_location();
             let msg = PutMsg::BroadcastTo {
                 id,
                 key,
                 new_value: new_value.clone(),
                 sender,
-                htl,
             };
 
             let mut broadcasting = Vec::with_capacity(broadcast_to.len());
@@ -416,13 +407,12 @@ where
             for (peer_num, err) in error_futures {
                 // remove the failed peers in reverse order
                 let peer = broadcast_to.remove(peer_num);
-                log::info!(
+                log::warn!(
                     "failed broadcasting put change to {} with error {}; dropping connection",
                     peer.peer,
                     err
                 );
                 conn_manager.drop_connection(peer.peer);
-
                 incorrect_results += 1;
             }
 
@@ -441,12 +431,11 @@ where
                     broadcast_to,
                     key,
                     new_value,
-                    htl,
                 })?
                 .map(Message::from);
             new_state = None;
             if &PutState::BroadcastComplete != state.sm.state() {
-                return Err(OpError::IllegalStateTransition);
+                return Err(OpError::InvalidStateTransition);
             }
         }
         PutMsg::SuccessfulUpdate { id, new_value } => {
@@ -463,7 +452,7 @@ where
             htl,
         } => {
             let key = contract.key();
-            let cached_contract = op_storage.ring.has_contract(&key);
+            let cached_contract = op_storage.ring.contract_exists(&key);
             let within_caching_dist = op_storage.ring.within_caching_distance(&key.location());
             if !cached_contract && within_caching_dist {
                 // this node does not have the contract, so instead store the contract and execute the put op.
@@ -486,7 +475,7 @@ where
             return_msg = None;
             new_state = None;
         }
-        _ => return Err(OpError::IllegalStateTransition),
+        _ => return Err(OpError::InvalidStateTransition),
     }
     Ok(OperationResult {
         return_msg,
@@ -517,7 +506,7 @@ where
             todo!("not a valid value update, notify back to requester")
         }
         Err(err) => Err(err.into()),
-        Ok(_) => Err(OpError::IllegalStateTransition),
+        Ok(_) => Err(OpError::InvalidStateTransition),
     }
 }
 
@@ -538,7 +527,7 @@ async fn forward_changes<CErr, CB>(
 {
     let key = contract.key();
     let contract_loc = key.location();
-    let forward_to = op_storage.ring.closest_caching(&key, 10, &[]).clone();
+    let forward_to = op_storage.ring.closest_caching(&key, 1, &[]);
     let own_loc = op_storage.ring.own_location().location.expect("infallible");
     for peer in forward_to {
         let other_loc = peer.location.as_ref().expect("infallible");
@@ -621,7 +610,6 @@ mod messages {
             broadcast_to: Vec<PeerKeyLocation>,
             key: ContractKey,
             new_value: ContractValue,
-            htl: usize,
         },
         /// Broadcasting a change to a peer, which then will relay the changes to other peers.
         BroadcastTo {
@@ -629,7 +617,6 @@ mod messages {
             sender: PeerKeyLocation,
             key: ContractKey,
             new_value: ContractValue,
-            htl: usize,
         },
     }
 
@@ -687,9 +674,12 @@ mod test {
 
     use super::*;
 
+    type Err = OpError<SimStorageError>;
+
     #[test]
     fn successful_put_op_seq() -> Result<(), anyhow::Error> {
-        let id = Transaction::new(<PutMsg as GetTxType>::tx_type_id());
+        let peer = PeerKey::random();
+        let id = Transaction::new(<PutMsg as TxType>::tx_type_id(), &peer);
         let bytes = crate::test_utils::random_bytes_1024();
         let mut gen = arbitrary::Unstructured::new(&bytes);
         let contract: Contract = gen.arbitrary()?;
@@ -698,25 +688,30 @@ mod test {
             peer: PeerKey::random(),
         };
 
-        let mut requester =
-            PutOp::start_op(contract.clone(), ContractValue::new(vec![0, 1, 2, 3]), 0).sm;
-        let mut target = StateMachine::<PutOpSM>::from_state(PutState::ReceivedRequest);
+        let mut requester = PutOp::start_op(
+            contract.clone(),
+            ContractValue::new(vec![0, 1, 2, 3]),
+            0,
+            &peer,
+        )
+        .sm;
+        let mut target = StateMachine::<PutOpSm>::from_state(PutState::ReceivedRequest);
 
-        // requester.consume_to_state();
-        let _req_msg =
-            requester.consume_to_output::<OpError<SimStorageError>>(PutMsg::RouteValue {
+        let req_msg = requester
+            .consume_to_output::<Err>(PutMsg::RouteValue {
                 id,
                 htl: 0,
                 target: target_loc,
-            })?;
-        let _expected = PutMsg::RequestPut {
+            })?
+            .ok_or_else(|| anyhow::anyhow!("no msg"))?;
+        let expected = PutMsg::RequestPut {
             id,
             contract: contract.clone(),
             value: ContractValue::new(vec![0, 1, 2, 3]),
             htl: 0,
             target: target_loc,
         };
-        // assert_eq!(req_msg, expected);
+        assert_eq!(req_msg, expected);
         assert_eq!(
             requester.state(),
             &PutState::AwaitingResponse {
@@ -725,15 +720,14 @@ mod test {
         );
 
         let res_msg = target
-            .consume_to_output::<OpError<SimStorageError>>(PutMsg::Broadcasting {
+            .consume_to_output::<Err>(PutMsg::Broadcasting {
                 id,
                 broadcast_to: vec![],
                 broadcasted_to: 0,
                 key: contract.key(),
                 new_value: ContractValue::new(vec![4, 3, 2, 1]),
-                htl: 0,
             })?
-            .ok_or(anyhow::anyhow!("no output"))?;
+            .ok_or_else(|| anyhow::anyhow!("no output"))?;
         let expected = PutMsg::SuccessfulUpdate {
             id,
             new_value: ContractValue::new(vec![4, 3, 2, 1]),

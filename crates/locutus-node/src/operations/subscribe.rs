@@ -6,7 +6,7 @@ use crate::{
     config::PEER_TIMEOUT,
     conn_manager::{ConnectionBridge, PeerKey},
     contract::{ContractError, ContractKey},
-    message::{GetTxType, Message, Transaction},
+    message::{Message, Transaction, TxType},
     node::OpManager,
     ring::{PeerKeyLocation, RingError},
 };
@@ -20,15 +20,15 @@ use super::{
 pub(crate) use self::messages::SubscribeMsg;
 
 pub(crate) struct SubscribeOp {
-    sm: StateMachine<SubscribeOpSM>,
+    sm: StateMachine<SubscribeOpSm>,
     _ttl: Duration,
 }
 
 impl SubscribeOp {
     const MAX_RETRIES: usize = 10;
 
-    pub fn start_op(key: ContractKey) -> Self {
-        let id = Transaction::new(<SubscribeMsg as GetTxType>::tx_type_id());
+    pub fn start_op(key: ContractKey, peer: &PeerKey) -> Self {
+        let id = Transaction::new(<SubscribeMsg as TxType>::tx_type_id(), peer);
         let sm = StateMachine::from_state(SubscribeState::PrepareRequest { id, key });
         SubscribeOp {
             sm,
@@ -37,16 +37,16 @@ impl SubscribeOp {
     }
 }
 
-struct SubscribeOpSM;
+struct SubscribeOpSm;
 
-impl StateMachineImpl for SubscribeOpSM {
+impl StateMachineImpl for SubscribeOpSm {
     type Input = SubscribeMsg;
 
     type State = SubscribeState;
 
     type Output = SubscribeMsg;
 
-    fn state_transition(state: &Self::State, input: &Self::Input) -> Option<Self::State> {
+    fn state_transition(state: &mut Self::State, input: &mut Self::Input) -> Option<Self::State> {
         match (state, input) {
             (SubscribeState::PrepareRequest { .. }, SubscribeMsg::FetchRouting { .. }) => {
                 Some(SubscribeState::AwaitingResponse {
@@ -151,7 +151,7 @@ where
     CErr: std::error::Error,
 {
     let (target, id) = if let SubscribeState::PrepareRequest { id, key } = sub_op.sm.state() {
-        if !op_storage.ring.has_contract(key) {
+        if !op_storage.ring.contract_exists(key) {
             return Err(OpError::ContractError(ContractError::ContractNotFound(
                 *key,
             )));
@@ -166,7 +166,7 @@ where
             *id,
         )
     } else {
-        return Err(OpError::IllegalStateTransition);
+        return Err(OpError::InvalidStateTransition);
     };
 
     if let Some(req_sub) = sub_op
@@ -267,14 +267,14 @@ where
                 }
             };
 
-            if !op_storage.ring.has_contract(&key) {
+            if !op_storage.ring.contract_exists(&key) {
                 //FIXME: should try forward to someone else who may have it first
                 // this node does not have the contract, return a void result to the requester
-                log::info!("Contract {} not found while processing info", key);
+                log::warn!("Contract {} not found while processing info", key);
                 return Ok(return_err());
             }
 
-            if let Err(_) = op_storage.ring.add_subscriber(key.clone(), subscriber) {
+            if op_storage.ring.add_subscriber(key, subscriber).is_err() {
                 // max number of subscribers for this contract reached
                 return Ok(return_err());
             }
@@ -296,7 +296,7 @@ where
             sender,
             id,
         } => {
-            log::info!(
+            log::warn!(
                 "Contract `{}` not found at potential subscription provider {}",
                 key,
                 sender.peer
@@ -330,7 +330,7 @@ where
                     return Err(RingError::NoCachingPeers(key).into());
                 }
             } else {
-                return Err(OpError::IllegalStateTransition);
+                return Err(OpError::InvalidStateTransition);
             }
         }
         SubscribeMsg::ReturnSub {
@@ -339,7 +339,7 @@ where
             sender,
             id,
         } => {
-            log::info!(
+            log::warn!(
                 "Subscribed to `{}` not found at potential subscription provider {}",
                 key,
                 sender.peer
@@ -356,7 +356,7 @@ where
                 .map(Message::from);
             new_state = None;
         }
-        _ => return Err(OpError::IllegalStateTransition),
+        _ => return Err(OpError::InvalidStateTransition),
     }
     Ok(OperationResult {
         return_msg,
@@ -405,9 +405,7 @@ mod messages {
         }
 
         pub fn sender(&self) -> Option<&PeerKeyLocation> {
-            match self {
-                _ => None,
-            }
+            None
         }
     }
 

@@ -11,21 +11,24 @@ use std::{net::IpAddr, sync::Arc};
 
 use libp2p::{identity, multiaddr::Protocol, Multiaddr, PeerId};
 
-use crate::contract::{MemoryContractHandler, StoreResponse};
+use crate::conn_manager::PeerKey;
+use crate::contract::MemoryContractHandler;
 use crate::operations::{subscribe, OpError};
 use crate::user_events::test_utils::MemoryEventsGen;
 use crate::{
     config::CONF,
-    contract::{ContractError, ContractHandler, ContractHandlerEvent},
+    contract::ContractError,
     operations::{get, put},
     ring::Location,
     user_events::{UserEvent, UserEventsProxy},
 };
 
 use self::libp2p_impl::NodeLibP2P;
+pub(crate) use event_listener::{EventListener, EventLog};
 pub(crate) use in_memory::NodeInMemory;
 pub(crate) use op_state::OpManager;
 
+mod event_listener;
 mod in_memory;
 mod libp2p_impl;
 mod op_state;
@@ -38,7 +41,11 @@ impl Node {
     pub async fn listen_on(&mut self) -> Result<(), ()> {
         match self.0 {
             NodeImpl::LibP2P(ref mut node) => node.listen_on().await,
-            NodeImpl::InMemory(ref mut node) => node.listen_on(MemoryEventsGen::new()).await,
+            NodeImpl::InMemory(ref mut node) => {
+                let (_usr_ev_controller, rcv_copy) = tokio::sync::watch::channel(PeerKey::random());
+                let user_events = MemoryEventsGen::new(rcv_copy, node.peer_key);
+                node.listen_on(user_events).await
+            }
         }
     }
 }
@@ -64,22 +71,19 @@ where
 pub struct NodeConfig {
     /// local peer private key in
     local_key: identity::Keypair,
-
     // optional local info, in case this is an initial bootstrap node
     /// IP to bind to the listener
     local_ip: Option<IpAddr>,
     /// socket port to bind to the listener
     local_port: Option<u16>,
-
     /// At least an other running listener node is required for joining the network.
     /// Not necessary if this is an initial node.
     remote_nodes: Vec<InitPeerNode>,
-
     /// the location of this node, used for gateways.
     location: Option<Location>,
-
     max_hops_to_live: Option<usize>,
     rnd_if_htl_above: Option<usize>,
+    max_number_conn: Option<usize>,
 }
 
 impl NodeConfig {
@@ -97,43 +101,49 @@ impl NodeConfig {
             location: None,
             max_hops_to_live: None,
             rnd_if_htl_above: None,
+            max_number_conn: None,
         }
     }
 
-    pub fn max_hops_to_live(mut self, num_hops: usize) -> Self {
+    pub fn max_hops_to_live(&mut self, num_hops: usize) -> &mut Self {
         self.max_hops_to_live = Some(num_hops);
         self
     }
 
-    pub fn rnd_if_htl_above(mut self, num_hops: usize) -> Self {
+    pub fn rnd_if_htl_above(&mut self, num_hops: usize) -> &mut Self {
         self.rnd_if_htl_above = Some(num_hops);
         self
     }
 
-    pub fn with_port(mut self, port: u16) -> Self {
+    pub fn max_number_of_connections(&mut self, num: usize) -> &mut Self {
+        self.max_number_conn = Some(num);
+        self
+    }
+
+    pub fn with_port(&mut self, port: u16) -> &mut Self {
         self.local_port = Some(port);
         self
     }
 
-    pub fn with_ip<T: Into<IpAddr>>(mut self, ip: T) -> Self {
+    pub fn with_ip<T: Into<IpAddr>>(&mut self, ip: T) -> &mut Self {
         self.local_ip = Some(ip.into());
         self
     }
 
     /// Optional identity key of this node.
     /// If not provided it will be either obtained from the configuration or freshly generated.
-    pub fn with_key(mut self, key: identity::Keypair) -> Self {
+    pub fn with_key(&mut self, key: identity::Keypair) -> &mut Self {
         self.local_key = key;
         self
     }
 
-    pub fn with_location(mut self, loc: Location) -> Self {
+    pub fn with_location(&mut self, loc: Location) -> &mut Self {
         self.location = Some(loc);
         self
     }
 
-    /// Connection info for an already existing peer. Required in case this is not a bootstrapping node.
-    pub fn add_provider(mut self, peer: InitPeerNode) -> Self {
+    /// Connection info for an already existing peer. Required in case this is not a gateway node.
+    pub fn add_gateway(&mut self, peer: InitPeerNode) -> &mut Self {
         self.remote_nodes.push(peer);
         self
     }
@@ -145,7 +155,19 @@ impl NodeConfig {
 
     /// Builds a node using in-memory transport. Used for testing pourpouses.
     pub fn build_in_memory(self) -> Result<Node, anyhow::Error> {
-        let in_mem = NodeInMemory::<SimStorageError>::build::<MemoryContractHandler>(self)?;
+        let listener;
+        #[cfg(test)]
+        {
+            use self::event_listener::TestEventListener;
+            listener = Box::new(TestEventListener::new())
+        }
+        #[cfg(not(test))]
+        {
+            use self::event_listener::EventRegister;
+            listener = Box::new(EventRegister::new())
+        }
+        let in_mem =
+            NodeInMemory::<SimStorageError>::build::<MemoryContractHandler>(self, Some(listener))?;
         Ok(Node(NodeImpl::InMemory(Box::new(in_mem))))
     }
 }
@@ -156,20 +178,20 @@ impl Default for NodeConfig {
     }
 }
 
-/// Initial listening peer node to bootstrap the network.
+/// Gateway node to bootstrap the network.
 #[derive(Clone)]
 pub struct InitPeerNode {
     addr: Option<Multiaddr>,
-    identifier: Option<PeerId>,
-    location: Option<Location>,
+    identifier: PeerId,
+    location: Location,
 }
 
 impl InitPeerNode {
-    pub fn new() -> Self {
+    pub fn new(identifier: PeerId, location: Location) -> Self {
         Self {
             addr: None,
-            identifier: None,
-            location: None,
+            identifier,
+            location,
         }
     }
 
@@ -204,16 +226,6 @@ impl InitPeerNode {
         }
         self
     }
-
-    pub fn with_identifier(mut self, id: PeerId) -> Self {
-        self.identifier = Some(id);
-        self
-    }
-
-    pub fn with_location(mut self, loc: Location) -> Self {
-        self.location = Some(loc);
-        self
-    }
 }
 
 impl std::default::Default for InitPeerNode {
@@ -224,8 +236,8 @@ impl std::default::Default for InitPeerNode {
         let multi_addr = multiaddr_from_connection((conf.bootstrap_ip, conf.bootstrap_port));
         Self {
             addr: Some(multi_addr),
-            identifier: Some(identifier),
-            location: None,
+            identifier,
+            location: Location::random(),
         }
     }
 }
@@ -252,15 +264,19 @@ where
             match ev {
                 UserEvent::Put { value, contract } => {
                     // Initialize a put op.
-                    let op =
-                        put::PutOp::start_op(contract, value, op_storage_cp.ring.max_hops_to_live);
+                    let op = put::PutOp::start_op(
+                        contract,
+                        value,
+                        op_storage_cp.ring.max_hops_to_live,
+                        &op_storage_cp.ring.peer_key,
+                    );
                     if let Err(err) = put::request_put(&op_storage_cp, op).await {
                         log::error!("{}", err);
                     }
                 }
                 UserEvent::Get { key, contract } => {
                     // Initialize a get op.
-                    let op = get::GetOp::start_op(key, contract);
+                    let op = get::GetOp::start_op(key, contract, &op_storage_cp.ring.peer_key);
                     if let Err(err) = get::request_get(&op_storage_cp, op).await {
                         log::error!("{}", err);
                     }
@@ -268,11 +284,13 @@ where
                 UserEvent::Subscribe { key } => {
                     // Initialize a subscribe op.
                     loop {
-                        let op = subscribe::SubscribeOp::start_op(key);
+                        let op =
+                            subscribe::SubscribeOp::start_op(key, &op_storage_cp.ring.peer_key);
                         match subscribe::request_subscribe(&op_storage_cp, op).await {
                             Err(OpError::ContractError(ContractError::ContractNotFound(key))) => {
-                                log::info!("Trying to subscribe to a contract not present: {}, requesting it first", key);
-                                let get_op = get::GetOp::start_op(key, true);
+                                log::warn!("Trying to subscribe to a contract not present: {}, requesting it first", key);
+                                let get_op =
+                                    get::GetOp::start_op(key, true, &op_storage_cp.ring.peer_key);
                                 if let Err(err) = get::request_get(&op_storage_cp, get_op).await {
                                     log::error!("Failed getting the contract `{}` while previously trying to subscribe; bailing: {}", key, err);
                                 }
@@ -287,77 +305,6 @@ where
                 }
             }
         });
-    }
-}
-
-async fn contract_handling<CH, Err>(mut contract_handler: CH) -> Result<(), ContractError<Err>>
-where
-    CH: ContractHandler<Error = Err> + Send + 'static,
-    Err: std::error::Error + Send + 'static,
-{
-    loop {
-        let res = contract_handler.channel().recv_from_listener().await?;
-        match res {
-            (
-                id,
-                ContractHandlerEvent::FetchQuery {
-                    key,
-                    fetch_contract,
-                },
-            ) => {
-                let contract = if fetch_contract {
-                    contract_handler
-                        .contract_store()
-                        .fetch_contract(&key)
-                        .await?
-                } else {
-                    None
-                };
-
-                let response = contract_handler
-                    .get_value(&key)
-                    .await
-                    .map(|value| StoreResponse { value, contract });
-
-                contract_handler
-                    .channel()
-                    .send_to_listener(id, ContractHandlerEvent::FetchResponse { key, response })
-                    .await?;
-            }
-            (id, ContractHandlerEvent::Cache(contract)) => {
-                match contract_handler
-                    .contract_store()
-                    .store_contract(contract)
-                    .await
-                {
-                    Ok(_) => {
-                        contract_handler
-                            .channel()
-                            .send_to_listener(id, ContractHandlerEvent::CacheResult(Ok(())))
-                            .await?;
-                    }
-                    Err(err) => {
-                        contract_handler
-                            .channel()
-                            .send_to_listener(id, ContractHandlerEvent::CacheResult(Err(err)))
-                            .await?;
-                    }
-                }
-            }
-            (id, ContractHandlerEvent::PushQuery { key, value }) => {
-                let put_result = contract_handler.put_value(&key, value).await;
-                contract_handler
-                    .channel()
-                    .send_to_listener(
-                        id,
-                        ContractHandlerEvent::PushResponse {
-                            new_value: put_result,
-                        },
-                    )
-                    .await?;
-            }
-            _ => unreachable!(),
-        }
     }
 }
 
