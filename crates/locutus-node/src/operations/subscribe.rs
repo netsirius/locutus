@@ -505,7 +505,9 @@ mod test {
     use crate::contract::Contract;
     use crate::node::test_utils::SimNetwork;
     use crate::ring::Location;
+    use crate::user_events::UserEvent;
     use crate::{conn_manager::PeerKey, node::SimStorageError};
+    use std::collections::HashMap;
 
     #[test]
     fn successful_subscribe_op_seq() -> Result<(), anyhow::Error> {
@@ -597,8 +599,25 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn successful_subscribe_op_between_nodes() -> Result<(), anyhow::Error> {
-        let mut sim_nodes = SimNetwork::new(1, 3, 10, 7, 100);
+        let mut sim_nodes = SimNetwork::new(1, 2, 10, 7, 100);
+        let contract: Contract = gen.arbitrary()?;
+        let contract_key: ContractKey = contract.clone().key();
+        let event = UserEvent::Subscribe { key: contract_key };
 
+        first_node = NodeSpecs(
+            owned_contracts: Vec::new(),
+            non_owned_contracts: Vec::from(contract_key),
+            events_to_generate: Vec::from(event),
+        );
+
+        second_node = NodeSpecs(
+            owned_contracts: Vec::new(contract),
+            non_owned_contracts: Vec::new(),
+            events_to_generate: Vec::new(),
+        );
+
+        subscribe_specs = HashMap::from([("node-0", first_node), ("node-1", second_node)]);
+        sim_nodes.build_with_specs(subscribe_specs);
         Ok(())
     }
 }

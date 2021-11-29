@@ -72,7 +72,10 @@ pub(crate) mod test_utils {
         }
 
         fn generate_deterministic_event(&mut self) -> UserEvent {
-            self.events_to_gen.get(0);
+            match self.events_to_gen.remove(0) {
+                Some(event) => event,
+                _ => panic!("no more events to generate"),
+            }
         }
 
         fn generate_rand_event(&mut self) -> UserEvent {
@@ -139,7 +142,7 @@ pub(crate) mod test_utils {
             loop {
                 if self.signal.changed().await.is_ok() {
                     if *self.signal.borrow() == self.id {
-                        return self.generate_rand_event();
+                        return self.generate_deterministic_event;
                     }
                 } else {
                     log::debug!("sender half of user event gen dropped");
