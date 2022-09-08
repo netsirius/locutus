@@ -53,16 +53,24 @@ impl ContractStore {
     pub fn new(contracts_dir: PathBuf, max_size: i64) -> RuntimeResult<Self> {
         const ERR: &str = "failed to build mem cache";
         let key_to_code_part;
-        LOCK_FILE_PATH.set(contracts_dir.join("__LOCK")).unwrap();
-        KEY_FILE_PATH.set(contracts_dir.join("KEY_DATA")).unwrap();
+
+        if LOCK_FILE_PATH.get().is_none() {
+            LOCK_FILE_PATH.set(contracts_dir.join("__LOCK")).unwrap();
+        }
+
+        if KEY_FILE_PATH.get().is_none() {
+            KEY_FILE_PATH.set(contracts_dir.join("KEY_DATA")).unwrap();
+        }
+
         if !contracts_dir.exists() {
-            std::fs::create_dir_all(&contracts_dir).map_err(|err| {
+            fs::create_dir_all(&contracts_dir).map_err(|err| {
                 tracing::error!("error creating contract dir: {err}");
                 err
             })?;
             key_to_code_part = Arc::new(DashMap::new());
             File::create(contracts_dir.join("KEY_DATA"))?;
         } else {
+            File::create(contracts_dir.join("KEY_DATA"))?;
             let map = Self::load_from_file()?;
             key_to_code_part = Arc::new(DashMap::from_iter(map.0));
         }
@@ -215,6 +223,8 @@ impl ContractStore {
 
     fn load_from_file() -> RuntimeResult<KeyToCodeMap> {
         let mut buf = vec![];
+        println!("Loading {:?} from file", KEY_FILE_PATH.get().unwrap().clone().into_os_string());
+        println!("exists {}", KEY_FILE_PATH.get().unwrap().clone().exists());
         let mut f = File::open(KEY_FILE_PATH.get().unwrap())?;
         f.read_to_end(&mut buf)?;
         let map = if buf.is_empty() {
