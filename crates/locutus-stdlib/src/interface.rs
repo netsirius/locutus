@@ -1087,7 +1087,15 @@ impl TryFrom<&rmpv::Value> for ContractKey {
     type Error = String;
 
     fn try_from(value: &rmpv::Value) -> Result<Self, Self::Error> {
-        let instance_id = value.as_slice().unwrap();
+        let key_map: HashMap<&str, &rmpv::Value> = HashMap::from_iter(
+            value
+                .as_map()
+                .unwrap()
+                .iter()
+                .map(|(key, val)| (key.as_str().unwrap(), val)),
+        );
+        let key_instance = *key_map.get("instance").unwrap();
+        let instance_id = key_instance.as_slice().unwrap();
         let instance_id = bs58::encode(&instance_id).into_string();
         Ok(ContractKey::from_id(instance_id).unwrap())
     }
