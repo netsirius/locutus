@@ -15,6 +15,8 @@ use tar::Builder;
 use crate::{config::BuildToolCliConfig, util::pipe_std_streams, DynError, Error};
 
 const DEFAULT_OUTPUT_NAME: &str = "contract-state";
+const WASI_TARGET: &str = "wasm32-wasi";
+const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 pub fn build_package(cli_config: BuildToolCliConfig, cwd: &Path) -> Result<(), DynError> {
     let mut config = get_config(cwd)?;
@@ -321,11 +323,8 @@ fn compile_contract(
     match config.contract.lang {
         Some(SupportedContractLangs::Rust) => {
             const RUST_TARGET_ARGS: &[&str] = &["build", "--release", "--target"];
-            let target = cli_config
-                .wasi
-                .then(|| "wasm32-wasi")
-                .unwrap_or("wasm32-unknown-unknown");
-            if target == "wasm32-wasi" {
+            let target = cli_config.wasi.then(|| WASI_TARGET).unwrap_or(WASM_TARGET);
+            if target == WASI_TARGET {
                 println!("Enabling WASI extension");
             }
             let cmd_args = if atty::is(atty::Stream::Stdout) && atty::is(atty::Stream::Stderr) {
@@ -355,7 +354,7 @@ fn compile_contract(
                 })?;
             pipe_std_streams(child)?;
 
-            let (package_name, output_lib) = get_out_lib(&work_dir)?;
+            let (package_name, output_lib) = get_out_lib(&work_dir, cli_config)?;
             if !output_lib.exists() {
                 return Err(Error::MissConfiguration(
                     format!("couldn't find output file: {output_lib:?}").into(),
@@ -376,8 +375,18 @@ fn compile_contract(
     Ok(())
 }
 
-fn get_out_lib(work_dir: &Path) -> Result<(String, PathBuf), DynError> {
+fn get_out_lib(
+    work_dir: &Path,
+    cli_config: &BuildToolCliConfig,
+) -> Result<(String, PathBuf), DynError> {
     const ERR: &str = "Cargo.toml definition incorrect";
+
+    let target = if cli_config.wasi {
+        WASI_TARGET
+    } else {
+        WASM_TARGET
+    };
+
     let mut f_content = vec![];
     File::open(work_dir.join("Cargo.toml"))?.read_to_end(&mut f_content)?;
     let cargo_config: toml::Value = toml::from_slice(&f_content)?;
@@ -395,7 +404,7 @@ fn get_out_lib(work_dir: &Path) -> Result<(String, PathBuf), DynError> {
         .replace('-', "_");
     let output_lib = env::var("CARGO_TARGET_DIR")?
         .parse::<PathBuf>()?
-        .join("wasm32-unknown-unknown")
+        .join(target)
         .join("release")
         .join(&package_name)
         .with_extension("wasm");
@@ -466,7 +475,7 @@ fn embed_deps(
             let config = get_config(&path)?;
             compile_contract(&config, cli_config, &path)?;
             let mut buf = vec![];
-            let (_pname, out) = get_out_lib(&path)?;
+            let (_pname, out) = get_out_lib(&path, cli_config)?;
             let mut f = File::open(out)?;
             f.read_to_end(&mut buf)?;
             let code = ContractCode::from(buf);
