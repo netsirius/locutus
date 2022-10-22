@@ -335,7 +335,11 @@ fn compile_contract(
                     .chain([target, "--color", "always"])
                     .collect::<Vec<_>>()
             } else {
-                RUST_TARGET_ARGS.to_vec()
+                RUST_TARGET_ARGS
+                    .iter()
+                    .copied()
+                    .chain([target])
+                    .collect::<Vec<_>>()
             };
 
             println!("Compiling contract with rust");
