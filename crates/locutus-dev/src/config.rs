@@ -82,8 +82,12 @@ pub struct PutConfig {
 /// Builds and packages a contract.
 ///
 /// This tool will build the WASM contract and publish it to the network.
-#[derive(clap::Parser, Clone)]
-pub struct BuildToolCliConfig {}
+#[derive(clap::Parser, Clone, Default)]
+pub struct BuildToolCliConfig {
+    /// Compile the contract with WASI extension enabled (useful for debugging).
+    #[clap(long)]
+    pub(crate) wasi: bool,
+}
 
 /// Create a new Locutus contract and/or app.
 #[derive(clap::Parser, Clone)]

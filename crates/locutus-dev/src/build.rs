@@ -16,15 +16,15 @@ use crate::{config::BuildToolCliConfig, util::pipe_std_streams, DynError, Error}
 
 const DEFAULT_OUTPUT_NAME: &str = "contract-state";
 
-pub fn build_package(_cli_config: BuildToolCliConfig, cwd: &Path) -> Result<(), DynError> {
+pub fn build_package(cli_config: BuildToolCliConfig, cwd: &Path) -> Result<(), DynError> {
     let mut config = get_config(cwd)?;
-    compile_contract(&config, cwd)?;
+    compile_contract(&config, &cli_config, cwd)?;
     match config.contract.c_type.unwrap_or(ContractType::Standard) {
         ContractType::WebApp => {
             let embedded =
                 if let Some(d) = config.webapp.as_ref().and_then(|a| a.dependencies.as_ref()) {
                     let deps = include_deps(d)?;
-                    embed_deps(cwd, deps)?
+                    embed_deps(cwd, deps, &cli_config)?
                 } else {
                     EmbeddedDeps::default()
                 };
@@ -309,20 +309,30 @@ fn get_config(cwd: &Path) -> Result<BuildToolConfig, DynError> {
     }
 }
 
-fn compile_contract(config: &BuildToolConfig, cwd: &Path) -> Result<(), DynError> {
+fn compile_contract(
+    config: &BuildToolConfig,
+    cli_config: &BuildToolCliConfig,
+    cwd: &Path,
+) -> Result<(), DynError> {
     let work_dir = match config.contract.c_type.unwrap_or(ContractType::Standard) {
         ContractType::WebApp => cwd.join("container"),
         ContractType::Standard => cwd.to_path_buf(),
     };
     match config.contract.lang {
         Some(SupportedContractLangs::Rust) => {
-            const RUST_TARGET_ARGS: &[&str] =
-                &["build", "--release", "--target", "wasm32-unknown-unknown"];
+            const RUST_TARGET_ARGS: &[&str] = &["build", "--release", "--target"];
+            let target = cli_config
+                .wasi
+                .then(|| "wasm32-wasi")
+                .unwrap_or("wasm32-unknown-unknown");
+            if target == "wasm32-wasi" {
+                println!("Enabling WASI extension");
+            }
             let cmd_args = if atty::is(atty::Stream::Stdout) && atty::is(atty::Stream::Stderr) {
                 RUST_TARGET_ARGS
                     .iter()
                     .copied()
-                    .chain(["--color", "always"])
+                    .chain([target, "--color", "always"])
                     .collect::<Vec<_>>()
             } else {
                 RUST_TARGET_ARGS.to_vec()
@@ -441,6 +451,7 @@ struct EmbeddedDeps {
 fn embed_deps(
     cwd: &Path,
     deps: HashMap<impl Into<String>, DependencyDefinition>,
+    cli_config: &BuildToolCliConfig,
 ) -> Result<EmbeddedDeps, DynError> {
     let cwd = fs::canonicalize(cwd)?;
     let mut deps_json = HashMap::new();
@@ -449,7 +460,7 @@ fn embed_deps(
         if let Some(path) = &dep.path {
             let path = cwd.join(path);
             let config = get_config(&path)?;
-            compile_contract(&config, &path)?;
+            compile_contract(&config, cli_config, &path)?;
             let mut buf = vec![];
             let (_pname, out) = get_out_lib(&path)?;
             let mut f = File::open(out)?;
@@ -533,7 +544,7 @@ mod test {
     #[test]
     fn compile_webapp_contract() -> Result<(), DynError> {
         let (config, cwd) = setup_webapp_contract()?;
-        compile_contract(&config, &cwd)?;
+        compile_contract(&config, &BuildToolCliConfig::default(), &cwd)?;
         Ok(())
     }
 
@@ -583,7 +594,7 @@ mod test {
             posts = { path = "../contracts/posts" }
         };
         let defs = include_deps(deps.as_table().unwrap())?;
-        embed_deps(&cwd, defs)?;
+        embed_deps(&cwd, defs, &BuildToolCliConfig::default())?;
         Ok(())
     }
 }
