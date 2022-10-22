@@ -148,7 +148,11 @@ impl ContractStore {
         let mut f = File::create(KEY_FILE_PATH.get().unwrap())?;
         f.write_all(&serialized)?;
         // release the lock
-        fs::remove_file(LOCK_FILE_PATH.get().unwrap())?;
+        match fs::remove_file(LOCK_FILE_PATH.get().unwrap()) {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(other) => return Err(other.into()),
+        }
 
         let key_path = bs58::encode(contract_hash)
             .with_alphabet(bs58::Alphabet::BITCOIN)
