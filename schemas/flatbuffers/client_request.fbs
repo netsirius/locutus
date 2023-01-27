@@ -9,6 +9,15 @@ table Key {
   code:[ubyte];
 }
 
+table ComponentKey {
+  data:[ubyte];
+}
+
+table SecretsId {
+    key: [ubyte];
+    hash: [ubyte];
+}
+
 table ContractV1 {
   key:Key;
   data:[ubyte];
@@ -114,12 +123,72 @@ union ContractRequestType {
   Subscribe
 }
 
+table Component {
+    code: [ubyte];
+    key: ComponentKey;
+}
+
+table ApplicationMessage {
+    app: ContractInstanceId;
+    payload: [ubyte];
+    context: [ubyte];
+    processed: bool;
+}
+
+table GetSecretResponse {
+    key: SecretsId;
+    value: [ubyte];
+    context: [ubyte];
+}
+
+table RandomBytes {
+    data: [ubyte];
+}
+
+table UserResponse {
+    request_id: int;
+    response: [ubyte];
+}
+
+union InboundComponentMsgType {
+    ApplicationMessage,
+    GetSecretResponse,
+    RandomBytes,
+    UserResponse
+}
+
+table InboundComponentMsg {
+    inbound: InboundComponentMsgType;
+}
+
+table ApplicationMessages {
+    key: ComponentKey;
+    inbound: [InboundComponentMsg];
+}
+
+table RegisterComponent {
+    component: Component;
+    cipher: [ubyte];
+    nonce: [ubyte];
+}
+
+table UnregisterComponent {
+    data: [ubyte];
+}
+
+union ComponentRequestType {
+  ApplicationMessages,
+  RegisterComponent,
+  UnregisterComponent
+}
+
+
 table FbsContractRequest {
   contract_request: ContractRequestType;
 }
 
 table FbsComponentRequest {
-  component_request: [ubyte];
+  component_request: ComponentRequestType;
 }
 
 table FbsGenerateRandData {
