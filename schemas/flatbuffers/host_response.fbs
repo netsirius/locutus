@@ -1,0 +1,188 @@
+namespace schemas.host;
+
+table ContractInstanceId {
+    data:[ubyte];
+}
+
+table Key {
+  instance:ContractInstanceId;
+  code:[ubyte];
+}
+
+table ComponentKey {
+  data:[ubyte];
+}
+
+table SecretsId {
+    key: [ubyte];
+    hash: [ubyte];
+}
+
+table ContractV1 {
+  key:Key;
+  data:[ubyte];
+  parameters:[ubyte];
+  version:string;
+}
+
+union WasmContract {
+  ContractV1
+}
+
+table ContractContainer {
+  contract:WasmContract;
+}
+
+table State {
+  data:[ubyte];
+}
+
+table StateDelta {
+  data:[ubyte];
+}
+
+table StateSummary {
+  data: [ubyte];
+}
+
+table StateUpdate {
+  state:State;
+}
+
+table DeltaUpdate {
+  delta:StateDelta;
+}
+
+table StateDeltaUpdate {
+  state:State;
+  delta:StateDelta;
+}
+
+table StateWithContractInstanceUpdate {
+  related_to:ContractInstanceId;
+  state:State;
+}
+
+table DeltaWithContractInstanceUpdate {
+  related_to:ContractInstanceId;
+  delta:StateDelta;
+}
+
+table StateDeltaWithContractInstanceUpdate {
+  related_to:ContractInstanceId;
+  state:State;
+  delta:StateDelta;
+}
+
+union UpdateDataType {
+  StateUpdate,
+  DeltaUpdate,
+  StateDeltaUpdate,
+  StateWithContractInstanceUpdate,
+  DeltaWithContractInstanceUpdate,
+  StateDeltaWithContractInstanceUpdate
+}
+
+table UpdateData {
+    update_data: UpdateDataType;
+}
+
+table HostError {
+  cause: string;
+}
+
+table PutResponse {
+  key: Key;
+}
+
+table UpdateResponse {
+  key: Key;
+  summary: StateSummary;
+}
+
+table GetResponse {
+  contract: ContractContainer;
+  state: State;
+}
+
+table UpdateNotification {
+  key: Key;
+  update: UpdateData;
+}
+
+union ContractResponseType {
+  GetResponse,
+  PutResponse,
+  UpdateNotification,
+  UpdateResponse
+}
+
+table ContractResponse {
+  contract_response: ContractResponseType;
+}
+
+table ApplicationMessage {
+    app: ContractInstanceId;
+    payload: [ubyte];
+    context: [ubyte];
+    processed: bool;
+}
+
+table ClientResponse {
+    data: [ubyte];
+}
+
+table RequestUserInput {
+    request_id: uint;
+    message:[ubyte];
+    responses:[ClientResponse];
+}
+
+table GetSecretRequest {
+    key: SecretsId;
+    context: [ubyte];
+    processed: bool;
+}
+
+table SetSecretRequest {
+    key: SecretsId;
+    value: [ubyte];
+}
+
+table RandomBytesRequest {
+    data: uint;
+}
+
+union OutboundComponentMsgType {
+    ApplicationMessage,
+    RequestUserInput,
+    GetSecretRequest,
+    SetSecretRequest,
+    RandomBytesRequest
+}
+
+table OutboundComponentMsg {
+    inbound: OutboundComponentMsgType;
+}
+
+table ComponentResponse {
+  key: [ubyte];
+  values: [ubyte];
+}
+
+
+table GenerateRandData {
+  bytes: [ubyte];
+}
+
+union HostResponseType {
+  ContractResponse,
+  ComponentResponse,
+  GenerateRandData,
+}
+
+table HostResponse {
+  response:HostResponseType;
+}
+
+root_type HostResponse;

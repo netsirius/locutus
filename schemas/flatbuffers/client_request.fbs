@@ -183,31 +183,31 @@ union ComponentRequestType {
 }
 
 
-table FbsContractRequest {
+table ContractRequest {
   contract_request: ContractRequestType;
 }
 
-table FbsComponentRequest {
+table ComponentRequest {
   component_request: ComponentRequestType;
 }
 
-table FbsGenerateRandData {
+table GenerateRandData {
   bytes: int;
 }
 
-table FbsDisconnect {
+table Disconnect {
   cause:string;
 }
 
 union ClientRequestType {
-    FbsContractRequest,
-    FbsComponentRequest,
-    FbsGenerateRandData,
-    FbsDisconnect
+    ContractRequest,
+    ComponentRequest,
+    GenerateRandData,
+    Disconnect
 }
 
-table FbsClientRequest {
+table ClientRequest {
     client_request: ClientRequestType(required);
 }
 
-root_type FbsClientRequest;
+root_type ClientRequest;

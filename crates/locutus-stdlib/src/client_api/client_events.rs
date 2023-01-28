@@ -4,7 +4,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
     client_request_generated::schemas::client::{
-        root_as_fbs_client_request, ClientRequestType, ContractRequestType, FbsContractRequest,
+        root_as_client_request, ClientRequestType, ContractRequest as FbsContractRequest,
+        ContractRequestType,
     },
     component_interface::{Component, ComponentKey, InboundComponentMsg, OutboundComponentMsg},
     prelude::{
@@ -163,15 +164,15 @@ impl<'a> From<ContractRequest<'a>> for ClientRequest<'a> {
 impl<'a> TryFromTsStd<&[u8]> for ClientRequest<'a> {
     fn try_decode(msg: &[u8]) -> Result<Self, WsApiError> {
         let req: ClientRequest = {
-            match root_as_fbs_client_request(msg) {
+            match root_as_client_request(msg) {
                 Ok(r) => match r.client_request_type() {
-                    ClientRequestType::FbsContractRequest => {
-                        let contract_request = r.client_request_as_fbs_contract_request().unwrap();
+                    ClientRequestType::ContractRequest => {
+                        let contract_request = r.client_request_as_contract_request().unwrap();
                         ContractRequest::try_decode(&contract_request)?.into()
                     }
-                    ClientRequestType::FbsComponentRequest => todo!(),
-                    ClientRequestType::FbsGenerateRandData => todo!(),
-                    ClientRequestType::FbsDisconnect => todo!(),
+                    ClientRequestType::ComponentRequest => todo!(),
+                    ClientRequestType::GenerateRandData => todo!(),
+                    ClientRequestType::Disconnect => todo!(),
                     _ => unreachable!(),
                 },
                 Err(e) => {
