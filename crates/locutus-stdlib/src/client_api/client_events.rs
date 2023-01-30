@@ -2,12 +2,39 @@ use std::fmt::Display;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+use crate::host_response_generated::schemas::host::{
+    ContractContainerArgs, ContractResponseArgs, ContractResponseType, ContractV1Args,
+    DeltaUpdateArgs, DeltaWithContractInstanceUpdateArgs, GetResponseArgs, HostResponseArgs,
+    HostResponseType, KeyArgs, PutResponseArgs, StateArgs, StateDeltaArgs, StateDeltaUpdateArgs,
+    StateDeltaWithContractInstanceUpdateArgs, StateSummaryArgs, StateUpdateArgs,
+    StateWithContractInstanceUpdate, StateWithContractInstanceUpdateArgs, UpdateDataArgs,
+    UpdateDataType, UpdateNotificationArgs, UpdateResponseArgs,
+};
+use crate::prelude::ContractContainer::Wasm;
+use crate::prelude::UpdateData::{
+    Delta, RelatedDelta, RelatedState, RelatedStateAndDelta, State, StateAndDelta,
+};
+use crate::prelude::WasmAPIVersion;
 use crate::{
     client_request_generated::schemas::client::{
         root_as_client_request, ClientRequestType, ContractRequest as FbsContractRequest,
         ContractRequestType,
     },
     component_interface::{Component, ComponentKey, InboundComponentMsg, OutboundComponentMsg},
+    host_response_generated::schemas::host::{
+        ContractContainer as FbsContractContainer, ContractInstanceId as FbsContractInstanceId,
+        ContractInstanceIdArgs, ContractResponse as FbsContractResponse,
+        ContractV1 as FbsContractV1, DeltaUpdate as FbsDeltaUpdate,
+        DeltaWithContractInstanceUpdate as FbsDeltaWithContractInstanceUpdate,
+        GetResponse as FbsGetResponse, HostResponse as FbsHostResponse, Key as FbsKey,
+        PutResponse as FbsPutResponse, State as FbsState, StateDelta as FbsStateDelta,
+        StateDeltaUpdate as FbsStateDeltaUpdate,
+        StateDeltaWithContractInstanceUpdate as FbsStateDeltaWithContractInstanceUpdate,
+        StateSummary as FbsStateSummary, StateUpdate as FbsStateUpdate,
+        StateWithContractInstanceUpdate as FbsStateWithContractInstanceUpdate,
+        UpdateData as FbsUpdateData, UpdateNotification as FbsUpdateNotification,
+        UpdateResponse as FbsUpdateResponse, WasmContract as FbsWasmContract,
+    },
     prelude::{
         ContractKey, RelatedContracts, StateSummary, TryFromTsStd, UpdateData, WrappedState,
         WsApiError,
@@ -337,6 +364,384 @@ impl HostResponse {
             (state, contract)
         } else {
             panic!("called `HostResponse::unwrap_put()` on other than `PutResponse` value")
+        }
+    }
+
+    pub fn to_fbs_bytes(self) -> Vec<u8> {
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        match self {
+            HostResponse::ContractResponse(res) => match res {
+                ContractResponse::PutResponse { key } => {
+                    let data = builder.create_vector(&key.bytes());
+                    let instance = FbsContractInstanceId::create(
+                        &mut builder,
+                        &ContractInstanceIdArgs { data: Some(data) },
+                    );
+                    let key = FbsKey::create(
+                        &mut builder,
+                        &KeyArgs {
+                            instance: Some(instance),
+                            code: None,
+                        },
+                    );
+                    let put =
+                        FbsPutResponse::create(&mut builder, &PutResponseArgs { key: Some(key) });
+                    let put_response = FbsContractResponse::create(
+                        &mut builder,
+                        &ContractResponseArgs {
+                            contract_response_type: ContractResponseType::PutResponse,
+                            contract_response: Some(put.as_union_value()),
+                        },
+                    );
+                    let host_response = FbsHostResponse::create(
+                        &mut builder,
+                        &HostResponseArgs {
+                            response_type: HostResponseType::ContractResponse,
+                            response: Some(put_response.as_union_value()),
+                        },
+                    );
+                    builder.finish(host_response, None);
+                    builder.finished_data().to_vec()
+                }
+                ContractResponse::UpdateResponse { key, summary } => {
+                    let data = builder.create_vector(&key.bytes());
+                    let instance = FbsContractInstanceId::create(
+                        &mut builder,
+                        &ContractInstanceIdArgs { data: Some(data) },
+                    );
+                    let key = FbsKey::create(
+                        &mut builder,
+                        &KeyArgs {
+                            instance: Some(instance),
+                            code: None,
+                        },
+                    );
+                    let data = builder.create_vector(&summary.into_bytes());
+                    let summary = FbsStateSummary::create(
+                        &mut builder,
+                        &StateSummaryArgs { data: Some(data) },
+                    );
+                    let update = FbsUpdateResponse::create(
+                        &mut builder,
+                        &UpdateResponseArgs {
+                            key: Some(key),
+                            summary: Some(summary),
+                        },
+                    );
+                    let update_response = FbsContractResponse::create(
+                        &mut builder,
+                        &ContractResponseArgs {
+                            contract_response_type: ContractResponseType::UpdateResponse,
+                            contract_response: Some(update.as_union_value()),
+                        },
+                    );
+                    let host_response = FbsHostResponse::create(
+                        &mut builder,
+                        &HostResponseArgs {
+                            response_type: HostResponseType::ContractResponse,
+                            response: Some(update_response.as_union_value()),
+                        },
+                    );
+                    builder.finish(host_response, None);
+                    builder.finished_data().to_vec()
+                }
+                ContractResponse::GetResponse { state, contract } => {
+                    let state_data = builder.create_vector(&state.to_vec());
+                    let state = FbsState::create(
+                        &mut builder,
+                        &StateArgs {
+                            data: Some(state_data),
+                        },
+                    );
+                    let contract = contract.unwrap();
+                    let data = builder.create_vector(&contract.key().bytes());
+                    let instance = FbsContractInstanceId::create(
+                        &mut builder,
+                        &ContractInstanceIdArgs { data: Some(data) },
+                    );
+                    let key = FbsKey::create(
+                        &mut builder,
+                        &KeyArgs {
+                            instance: Some(instance),
+                            code: None,
+                        },
+                    );
+                    let contract_data = builder.create_vector(&contract.data());
+                    let contract_params = builder.create_vector(&contract.params().into_bytes());
+                    let contract_version = builder.create_string(&contract.version());
+                    let contract = match contract {
+                        Wasm(WasmAPIVersion::V1(..)) => FbsContractV1::create(
+                            &mut builder,
+                            &ContractV1Args {
+                                key: Some(key),
+                                data: Some(contract_data),
+                                parameters: Some(contract_params),
+                                version: Some(contract_version),
+                            },
+                        ),
+                    };
+                    let container = FbsContractContainer::create(
+                        &mut builder,
+                        &ContractContainerArgs {
+                            contract_type: FbsWasmContract::ContractV1,
+                            contract: Some(contract.as_union_value()),
+                        },
+                    );
+                    let get = FbsGetResponse::create(
+                        &mut builder,
+                        &GetResponseArgs {
+                            contract: Some(container),
+                            state: Some(state),
+                        },
+                    );
+                    let get_response = FbsContractResponse::create(
+                        &mut builder,
+                        &ContractResponseArgs {
+                            contract_response_type: ContractResponseType::PutResponse,
+                            contract_response: Some(get.as_union_value()),
+                        },
+                    );
+                    let host_response = FbsHostResponse::create(
+                        &mut builder,
+                        &HostResponseArgs {
+                            response_type: HostResponseType::ContractResponse,
+                            response: Some(get_response.as_union_value()),
+                        },
+                    );
+                    builder.finish(host_response, None);
+                    builder.finished_data().to_vec()
+                }
+                ContractResponse::UpdateNotification { key, update } => {
+                    let data = builder.create_vector(&key.bytes());
+                    let instance = FbsContractInstanceId::create(
+                        &mut builder,
+                        &ContractInstanceIdArgs { data: Some(data) },
+                    );
+                    let key = FbsKey::create(
+                        &mut builder,
+                        &KeyArgs {
+                            instance: Some(instance),
+                            code: None,
+                        },
+                    );
+
+                    let update_data = match update {
+                        State(state) => {
+                            let state_data = builder.create_vector(&state.into_bytes());
+                            let state = FbsState::create(
+                                &mut builder,
+                                &StateArgs {
+                                    data: Some(state_data),
+                                },
+                            );
+                            let state = FbsStateUpdate::create(
+                                &mut builder,
+                                &StateUpdateArgs { state: Some(state) },
+                            );
+
+                            // Create the update data
+                            FbsUpdateData::create(
+                                &mut builder,
+                                &UpdateDataArgs {
+                                    update_data_type: UpdateDataType::StateUpdate,
+                                    update_data: Some(state.as_union_value()),
+                                },
+                            )
+                        }
+                        Delta(delta) => {
+                            let delta_data = builder.create_vector(&delta.into_bytes());
+                            let delta = FbsStateDelta::create(
+                                &mut builder,
+                                &StateDeltaArgs {
+                                    data: Some(delta_data),
+                                },
+                            );
+                            let update = FbsDeltaUpdate::create(
+                                &mut builder,
+                                &DeltaUpdateArgs { delta: Some(delta) },
+                            );
+
+                            // Create the update data
+                            FbsUpdateData::create(
+                                &mut builder,
+                                &UpdateDataArgs {
+                                    update_data_type: UpdateDataType::DeltaUpdate,
+                                    update_data: Some(update.as_union_value()),
+                                },
+                            )
+                        }
+                        StateAndDelta { state, delta } => {
+                            let state_data = builder.create_vector(&state.into_bytes());
+                            let state = FbsState::create(
+                                &mut builder,
+                                &StateArgs {
+                                    data: Some(state_data),
+                                },
+                            );
+                            let delta_data = builder.create_vector(&delta.into_bytes());
+                            let delta = FbsStateDelta::create(
+                                &mut builder,
+                                &StateDeltaArgs {
+                                    data: Some(delta_data),
+                                },
+                            );
+
+                            let update = FbsStateDeltaUpdate::create(
+                                &mut builder,
+                                &StateDeltaUpdateArgs {
+                                    state: Some(state),
+                                    delta: Some(delta),
+                                },
+                            );
+
+                            // Create the update data
+                            FbsUpdateData::create(
+                                &mut builder,
+                                &UpdateDataArgs {
+                                    update_data_type: UpdateDataType::StateDeltaUpdate,
+                                    update_data: Some(update.as_union_value()),
+                                },
+                            )
+                        }
+                        RelatedState { related_to, state } => {
+                            let data = builder.create_vector(&related_to.as_bytes());
+                            let instance = FbsContractInstanceId::create(
+                                &mut builder,
+                                &ContractInstanceIdArgs { data: Some(data) },
+                            );
+
+                            let state_data = builder.create_vector(&state.into_bytes());
+                            let state = FbsState::create(
+                                &mut builder,
+                                &StateArgs {
+                                    data: Some(state_data),
+                                },
+                            );
+
+                            let update = FbsStateWithContractInstanceUpdate::create(
+                                &mut builder,
+                                &StateWithContractInstanceUpdateArgs {
+                                    related_to: Some(instance),
+                                    state: Some(state),
+                                },
+                            );
+
+                            // Create the update data
+                            FbsUpdateData::create(
+                                &mut builder,
+                                &UpdateDataArgs {
+                                    update_data_type: UpdateDataType::StateDeltaUpdate,
+                                    update_data: Some(update.as_union_value()),
+                                },
+                            )
+                        }
+                        RelatedDelta { related_to, delta } => {
+                            let data = builder.create_vector(&related_to.as_bytes());
+                            let instance = FbsContractInstanceId::create(
+                                &mut builder,
+                                &ContractInstanceIdArgs { data: Some(data) },
+                            );
+
+                            let delta_data = builder.create_vector(&delta.into_bytes());
+                            let delta = FbsStateDelta::create(
+                                &mut builder,
+                                &StateDeltaArgs {
+                                    data: Some(delta_data),
+                                },
+                            );
+
+                            let update = FbsDeltaWithContractInstanceUpdate::create(
+                                &mut builder,
+                                &DeltaWithContractInstanceUpdateArgs {
+                                    related_to: Some(instance),
+                                    delta: Some(delta),
+                                },
+                            );
+
+                            // Create the update data
+                            FbsUpdateData::create(
+                                &mut builder,
+                                &UpdateDataArgs {
+                                    update_data_type: UpdateDataType::StateDeltaUpdate,
+                                    update_data: Some(update.as_union_value()),
+                                },
+                            )
+                        }
+                        RelatedStateAndDelta {
+                            related_to,
+                            state,
+                            delta,
+                        } => {
+                            let data = builder.create_vector(&related_to.as_bytes());
+                            let instance = FbsContractInstanceId::create(
+                                &mut builder,
+                                &ContractInstanceIdArgs { data: Some(data) },
+                            );
+
+                            let state_data = builder.create_vector(&state.into_bytes());
+                            let state = FbsState::create(
+                                &mut builder,
+                                &StateArgs {
+                                    data: Some(state_data),
+                                },
+                            );
+
+                            let delta_data = builder.create_vector(&delta.into_bytes());
+                            let delta = FbsStateDelta::create(
+                                &mut builder,
+                                &StateDeltaArgs {
+                                    data: Some(delta_data),
+                                },
+                            );
+
+                            let update = FbsStateDeltaWithContractInstanceUpdate::create(
+                                &mut builder,
+                                &StateDeltaWithContractInstanceUpdateArgs {
+                                    related_to: Some(instance),
+                                    state: Some(state),
+                                    delta: Some(delta),
+                                },
+                            );
+
+                            // Create the update data
+                            FbsUpdateData::create(
+                                &mut builder,
+                                &UpdateDataArgs {
+                                    update_data_type: UpdateDataType::StateDeltaUpdate,
+                                    update_data: Some(update.as_union_value()),
+                                },
+                            )
+                        }
+                    };
+
+                    let update_notification = FbsUpdateNotification::create(
+                        &mut builder,
+                        &UpdateNotificationArgs {
+                            key: Some(key),
+                            update: Some(update_data),
+                        },
+                    );
+                    let put_response = FbsContractResponse::create(
+                        &mut builder,
+                        &ContractResponseArgs {
+                            contract_response_type: ContractResponseType::PutResponse,
+                            contract_response: Some(update_notification.as_union_value()),
+                        },
+                    );
+                    let host_response = FbsHostResponse::create(
+                        &mut builder,
+                        &HostResponseArgs {
+                            response_type: HostResponseType::ContractResponse,
+                            response: Some(put_response.as_union_value()),
+                        },
+                    );
+                    builder.finish(host_response, None);
+                    builder.finished_data().to_vec()
+                }
+            },
+            HostResponse::ComponentResponse { .. } => todo!(),
+            HostResponse::Ok => todo!(),
+            HostResponse::GenerateRandData(_) => todo!(),
         }
     }
 }

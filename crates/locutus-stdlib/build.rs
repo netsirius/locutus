@@ -7,6 +7,7 @@ fn main() {
         .arg("-o")
         .arg("../../target/flatbuffers/")
         .arg("../../schemas/flatbuffers/client_request.fbs")
+        .arg("../../schemas/flatbuffers/host_response.fbs")
         .status()
         .unwrap();
     assert!(status.success());

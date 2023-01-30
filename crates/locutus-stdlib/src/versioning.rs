@@ -58,6 +58,13 @@ impl ContractContainer {
             Self::Wasm(WasmAPIVersion::V1(contract_v1)) => contract_v1.clone().try_into().unwrap(),
         }
     }
+
+    /// Return the contract version.
+    pub fn version(&self) -> String {
+        match self {
+            Self::Wasm(WasmAPIVersion::V1(..)) => String::from("V1"),
+        }
+    }
 }
 
 impl Display for ContractContainer {

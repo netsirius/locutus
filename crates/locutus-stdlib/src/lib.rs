@@ -16,6 +16,10 @@ pub mod client_api;
 #[allow(dead_code, unused_imports, clippy::all)]
 #[path = "../../../target/flatbuffers/client_request_generated.rs"]
 pub mod client_request_generated;
+pub mod contract_interface;
+#[allow(dead_code, unused_imports, clippy::all)]
+#[path = "../../../target/flatbuffers/host_response_generated.rs"]
+pub mod host_response_generated;
 mod component_interface;
 mod contract_interface;
 pub(crate) mod global;

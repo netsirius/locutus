@@ -21,8 +21,10 @@ use crate::client_request_generated::schemas::client::{
     ContractV1, Key, RelatedContracts as FbsRelatedContracts, State as FbsState,
     UpdateData as FbsUpdateData, UpdateDataType,
 };
+use crate::host_response_generated;
 use blake2::{Blake2s256, Digest};
 use byteorder::LittleEndian;
+use flatbuffers::FlatBufferBuilder;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::serde_as;
 
@@ -993,6 +995,10 @@ impl ContractInstanceId {
             .into_string()
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+
     /// Build `ContractId` from the binary representation.
     fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self, bs58::decode::Error> {
         let mut spec = [0; CONTRACT_KEY_SIZE];
@@ -1142,6 +1148,24 @@ impl ContractKey {
     /// Returns the `Base58` encoded string of the [`ContractInstanceId`](ContractInstanceId).
     pub fn encoded_contract_id(&self) -> String {
         self.instance.encode()
+    }
+
+    pub fn to_fbs<'a>(
+        &self,
+        builder: &'a mut FlatBufferBuilder,
+    ) -> flatbuffers::WIPOffset<host_response_generated::schemas::host::Key<'a>> {
+        let data = builder.create_vector(&self.bytes());
+        let instance = host_response_generated::schemas::host::ContractInstanceId::create(
+            builder,
+            &host_response_generated::schemas::host::ContractInstanceIdArgs { data: Some(data) },
+        );
+        host_response_generated::schemas::host::Key::create(
+            builder,
+            &host_response_generated::schemas::host::KeyArgs {
+                instance: Some(instance),
+                code: None,
+            },
+        )
     }
 }
 
@@ -1669,14 +1693,14 @@ pub(crate) mod wasm_interface {
 #[cfg(all(test, target_family = "unix"))]
 mod test {
     use super::*;
-    use crate::client_request_generated;
     use crate::client_request_generated::schemas::client::{
-        ClientRequestType, ContractContainerArgs, ContractInstanceIdArgs, ContractRequestType,
-        ContractV1Args, DeltaUpdateArgs, FbsClientRequest, FbsClientRequestArgs,
-        FbsContractRequest, FbsContractRequestArgs, GetArgs, KeyArgs, PutArgs, RelatedContractArgs,
-        RelatedContractsArgs, StateArgs, StateDeltaArgs, UpdateArgs, UpdateDataArgs, WasmContract,
+        ClientRequest as FbsClientRequest, ClientRequestArgs as FbsClientRequestArgs,
+        ContractInstanceIdArgs, ContractRequest as FbsContractRequest,
+        ContractRequestArgs as FbsContractRequestArgs, ContractRequestType, ContractV1Args,
+        DeltaUpdateArgs, GetArgs, KeyArgs, PutArgs, RelatedContractArgs, RelatedContractsArgs,
+        StateArgs, StateDeltaArgs, UpdateArgs, UpdateDataArgs, WasmContract,
     };
-    use flatbuffers::{FlatBufferBuilder, ForwardsUOffset, Vector, WIPOffset};
+    use flatbuffers::{ForwardsUOffset, Vector, WIPOffset};
     use once_cell::sync::Lazy;
     use rand::{rngs::SmallRng, Rng, SeedableRng};
 
