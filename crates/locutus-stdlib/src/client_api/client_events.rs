@@ -7,7 +7,7 @@ use crate::host_response_generated::schemas::host::{
     DeltaUpdateArgs, DeltaWithContractInstanceUpdateArgs, GetResponseArgs, HostResponseArgs,
     HostResponseType, KeyArgs, PutResponseArgs, StateArgs, StateDeltaArgs, StateDeltaUpdateArgs,
     StateDeltaWithContractInstanceUpdateArgs, StateSummaryArgs, StateUpdateArgs,
-    StateWithContractInstanceUpdate, StateWithContractInstanceUpdateArgs, UpdateDataArgs,
+    StateWithContractInstanceUpdateArgs, UpdateDataArgs,
     UpdateDataType, UpdateNotificationArgs, UpdateResponseArgs,
 };
 use crate::prelude::ContractContainer::Wasm;
