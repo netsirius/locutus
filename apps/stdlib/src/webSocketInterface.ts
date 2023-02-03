@@ -368,14 +368,8 @@ export class LocutusWsApi {
    * @param disconnect - The `DisconnectRequest` object
    */
   async disconnect(disconnect: DisconnectRequest): Promise<void> {
-    const builder = new flatbuffers.Builder();
-    Disconnect.startDisconnect(builder);
-    Disconnect.addCause(builder, builder.createString(disconnect.cause))
-    ClientRequest.addClientRequest(
-        builder,
-        Disconnect.endDisconnect(builder)
-    );
-    let request_bytes = new Uint8Array(ClientRequest.endClientRequest(builder));
+    let request = new FlatbuffersClientRequest(RequestType.DisconnectRequest, disconnect);
+    let request_bytes = request.request_bytes;
     this.ws.send(request_bytes);
     this.ws.close();
   }
@@ -749,15 +743,19 @@ enum RequestType {
 export class FlatbuffersClientRequest {
   request_bytes: Uint8Array;
   constructor(requestType: RequestType, requestData: any) {
-    const builder = new flatbuffers.Builder();
+    let builder = new flatbuffers.Builder();
     switch (requestType) {
       case RequestType.PutRequest:
         const { container, state, relatedContracts } = requestData as PutRequest;
 
+        const putContainerOffset = this.buildContractContainer(builder, container);
+        const putStateOffset = this.buildState(state);
+        const putRelatedContractsOffset = this.buildRelatedContracts(builder, relatedContracts);
+
         Put.startPut(builder);
-        Put.addContainer(builder, this.buildContractContainer(builder, container));
-        Put.addState(builder, this.buildState(builder, state));
-        Put.addRelatedContracts(builder, this.buildRelatedContracts(builder, relatedContracts));
+        Put.addContainer(builder, putContainerOffset);
+        Put.addState(builder, putStateOffset);
+        Put.addRelatedContracts(builder, putRelatedContractsOffset);
         const putRequestOffset = Put.endPut(builder);
 
         ContractRequest.startContractRequest(builder);
@@ -769,17 +767,20 @@ export class FlatbuffersClientRequest {
             builder,
             putRequestOffset
         );
+        const putContractRequestOffset = ContractRequest.endContractRequest(builder);
         ClientRequest.startClientRequest(builder);
         ClientRequest.addClientRequest(
             builder,
-            ContractRequest.endContractRequest(builder)
+            putContractRequestOffset
         );
         this.request_bytes = new Uint8Array(ClientRequest.endClientRequest(builder));
         break;
       case RequestType.GetRequest:
         const { key: getKey, fetchContract } = requestData as GetRequest;
+
+        const getKeyOffset = this.buildKey(builder, getKey);
         Get.startGet(builder);
-        Get.addKey(builder, this.buildKey(builder, getKey));
+        Get.addKey(builder, getKeyOffset);
         Get.addFetchContract(builder, fetchContract);
         const getRequestOffset = Get.endGet(builder);
 
@@ -793,18 +794,21 @@ export class FlatbuffersClientRequest {
             getRequestOffset
         );
 
+        const getContractRequestOffset = ContractRequest.endContractRequest(builder);
+
         ClientRequest.startClientRequest(builder);
         ClientRequest.addClientRequest(
             builder,
-            ContractRequest.endContractRequest(builder)
+            getContractRequestOffset
         );
         this.request_bytes = new Uint8Array(ClientRequest.endClientRequest(builder));
         break;
       case RequestType.SubscribeRequest:
         const { key: subscribeKey } = requestData as SubscribeRequest;
 
+        const subscribeKeyOffset = this.buildKey(builder, subscribeKey);
         Subscribe.startSubscribe(builder);
-        Subscribe.addKey(builder, this.buildKey(builder, subscribeKey));
+        Subscribe.addKey(builder, subscribeKeyOffset);
         const subscribeRequestOffset = Subscribe.endSubscribe(builder);
 
         ContractRequest.startContractRequest(builder);
@@ -816,22 +820,36 @@ export class FlatbuffersClientRequest {
             builder,
             subscribeRequestOffset
         );
+        const subscribeContractRequestOffset = ContractRequest.endContractRequest(builder);
 
         ClientRequest.startClientRequest(builder);
         ClientRequest.addClientRequest(
             builder,
-            ContractRequest.endContractRequest(builder)
+            subscribeContractRequestOffset
         );
         this.request_bytes = new Uint8Array(ClientRequest.endClientRequest(builder));
         break;
       case RequestType.DisconnectRequest:
-        this.request_bytes = new Uint8Array();
+        const { cause } = requestData as DisconnectRequest;
+
+        const causeString = builder.createString(cause);
+        Disconnect.startDisconnect(builder);
+        Disconnect.addCause(builder, causeString)
+        const disconnectOffset = ContractRequest.endContractRequest(builder);
+        ClientRequest.addClientRequest(
+            builder,
+            disconnectOffset
+        );
+        this.request_bytes = new Uint8Array(ClientRequest.endClientRequest(builder));
         break;
       case RequestType.UpdateRequest:
         const { key: updateKey, data: updateData } = requestData as UpdateRequest;
+
+        const updateKeyOffset = this.buildKey(builder, updateKey);
+        const updateDataOffset = this.buildUpdateData(builder, updateData);
         Update.startUpdate(builder);
-        Update.addKey(builder,  this.buildKey(builder, updateKey));
-        Update.addData(builder, this.buildUpdateData(builder, updateData));
+        Update.addKey(builder,  updateKeyOffset);
+        Update.addData(builder, updateDataOffset);
         const updateRequestOffset = Update.endUpdate(builder);
 
         ContractRequest.startContractRequest(builder);
@@ -844,14 +862,14 @@ export class FlatbuffersClientRequest {
             updateRequestOffset
         );
 
-        const contractRequestOffset = ContractRequest.endContractRequest(
+        const updateContractRequestOffset = ContractRequest.endContractRequest(
             builder
         );
 
         ClientRequest.startClientRequest(builder);
         ClientRequest.addClientRequest(
             builder,
-            contractRequestOffset
+            updateContractRequestOffset
         );
         this.request_bytes = new Uint8Array(ClientRequest.endClientRequest(builder));
         break;
@@ -868,25 +886,34 @@ export class FlatbuffersClientRequest {
 
   buildKey(builder: flatbuffers.Builder, key: Key): flatbuffers.Offset {
     const instance = key.bytes();
-    const code = key.codePart()?.buffer as Uint8Array;
-    FbsKey.startKey(builder);
-    FbsKey.addInstance(builder, this.buildContractInstanceId(builder, instance));
+    let code = key.codePart();
+    if (code !== null) {
+      code = code as Uint8Array;
+    } else {
+      code = new Uint8Array();
+    }
     const code_vector = FbsKey.createCodeVector(builder, code);
+    const instanceOffset = this.buildContractInstanceId(builder, instance);
+    FbsKey.startKey(builder);
+    FbsKey.addInstance(builder, instanceOffset);
     FbsKey.addCode(builder, code_vector);
     return FbsKey.endKey(builder);
   }
 
-  buildState(builder: flatbuffers.Builder, data: Uint8Array): flatbuffers.Offset {
-    FbsState.startState(builder);
+  buildState(data: Uint8Array): flatbuffers.Offset {
+    let builder = new flatbuffers.Builder();
     const data_vector = FbsKey.createCodeVector(builder, data);
+    FbsState.startState(builder);
     FbsState.addData(builder, data_vector);
     return FbsState.endState(builder);
   }
 
   buildRelatedContract(builder: flatbuffers.Builder, instanceId: Uint8Array, state: Uint8Array): flatbuffers.Offset {
+    const instanceOffset = this.buildContractInstanceId(builder, instanceId);
+    const stateOffset = this.buildState(state);
     RelatedContract.startRelatedContract(builder);
-    RelatedContract.addInstanceId(builder, this.buildContractInstanceId(builder, instanceId));
-    RelatedContract.addState(builder, this.buildState(builder, state));
+    RelatedContract.addInstanceId(builder, instanceOffset);
+    RelatedContract.addState(builder, stateOffset);
     return RelatedContract.endRelatedContract(builder);
   }
 
@@ -897,8 +924,8 @@ export class FlatbuffersClientRequest {
       contractOffsets.push(this.buildRelatedContract(builder, instanceId?.buffer as Uint8Array, state))
     });
 
-    FbsRelatedContracts.startRelatedContracts(builder);
     const contracts_vector = FbsRelatedContracts.createContractsVector(builder, contractOffsets);
+    FbsRelatedContracts.startRelatedContracts(builder);
     FbsRelatedContracts.addContracts(builder, contracts_vector);
     return FbsRelatedContracts.endRelatedContracts(builder);
   }
@@ -910,19 +937,20 @@ export class FlatbuffersClientRequest {
     const version = container.version
 
     const wasmKey = this.buildKey(builder, key);
+    const data_vector = FbsContractV1.createDataVector(builder, data);
+    const parameters_vector = FbsContractV1.createDataVector(builder, parameters);
+    const versionString = builder.createString(version.toString());
 
     FbsContractV1.startContractV1(builder);
     FbsContractV1.addKey(builder, wasmKey);
-    const data_vector = FbsContractV1.createDataVector(builder, data);
     FbsContractV1.addData(builder, data_vector);
-    const parameters_vector = FbsContractV1.createDataVector(builder, parameters);
     FbsContractV1.addParameters(builder, parameters_vector);
-    FbsContractV1.addVersion(builder, builder.createString(version.toString()));
+    FbsContractV1.addVersion(builder, versionString);
+    const contractOffset = FbsContractV1.endContractV1(builder);
 
     FbsContractContainer.startContractContainer(builder);
     FbsContractContainer.addContractType(builder, FbsWasmContract.ContractV1);
-    FbsContractContainer.addContract(builder, FbsContractV1.endContractV1(builder));
-
+    FbsContractContainer.addContract(builder, contractOffset);
     return FbsContractContainer.endContractContainer(builder);
   }
 
@@ -930,13 +958,14 @@ export class FlatbuffersClientRequest {
     if ('state' in updateData) {
       if ('delta' in updateData) {
         const { state, delta } = updateData;
-        FbsState.startState(builder);
+
         const state_vector = FbsState.createDataVector(builder, state);
+        FbsState.startState(builder);
         FbsState.createState(builder, state_vector);
         const stateOffset = FbsState.endState(builder);
 
-        FbsStateDelta.startStateDelta(builder);
         const deltaVector = FbsStateDelta.createDataVector(builder, delta);
+        FbsStateDelta.startStateDelta(builder);
         FbsStateDelta.createStateDelta(builder, deltaVector);
         const deltaOffset = FbsStateDelta.endStateDelta(builder);
 
@@ -956,10 +985,11 @@ export class FlatbuffersClientRequest {
         return FbsUpdateData.endUpdateData(builder);
       } else {
         const { state } = updateData;
-        FbsState.startState(builder);
+
         const stateVector = FbsState.createDataVector(builder, state);
-        FbsState.createState(builder, stateVector);
         const stateOffset = FbsState.endState(builder);
+        FbsState.startState(builder);
+        FbsState.createState(builder, stateVector);
         FbsStateUpdate.startStateUpdate(builder);
         FbsStateUpdate.addState(builder, stateOffset);
         const stateUpdateOffset = FbsStateUpdate.endStateUpdate(builder);
@@ -977,14 +1007,14 @@ export class FlatbuffersClientRequest {
     } else if ('delta' in updateData) {
       if ('relatedTo' in updateData) {
         const { relatedTo, delta } = updateData;
-        FbsContractInstanceId.startContractInstanceId(builder);
+
         const contractInstanceVector = FbsContractInstanceId.createDataVector(builder, relatedTo);
+        FbsContractInstanceId.startContractInstanceId(builder);
         FbsContractInstanceId.addData(builder, contractInstanceVector);
         const contractInstanceOffset = FbsContractInstanceId.endContractInstanceId(builder);
 
-        FbsContractInstanceId.endContractInstanceId(builder);
-        FbsStateDelta.startStateDelta(builder);
         const deltaVector = FbsStateDelta.createDataVector(builder, delta);
+        FbsStateDelta.startStateDelta(builder);
         FbsStateDelta.createStateDelta(builder, deltaVector);
         const deltaOffset = FbsStateDelta.endStateDelta(builder);
 
@@ -1004,8 +1034,9 @@ export class FlatbuffersClientRequest {
         return FbsUpdateData.endUpdateData(builder);
       } else {
         const { delta } = updateData;
-        FbsStateDelta.startStateDelta(builder);
+
         const deltaVector = FbsStateDelta.createDataVector(builder, delta);
+        FbsStateDelta.startStateDelta(builder);
         FbsStateDelta.createStateDelta(builder, deltaVector);
         const deltaOffset = FbsStateDelta.endStateDelta(builder);
 
@@ -1025,14 +1056,15 @@ export class FlatbuffersClientRequest {
       }
     } else if ('relatedTo' in updateData) {
       const { relatedTo, state } = updateData;
-      FbsContractInstanceId.startContractInstanceId(builder);
+
       const contractInstanceVector = FbsContractInstanceId.createDataVector(builder, relatedTo);
+      FbsContractInstanceId.startContractInstanceId(builder);
       FbsContractInstanceId.addData(builder, contractInstanceVector);
       const contractInstanceOffset = FbsContractInstanceId.endContractInstanceId(builder);
 
+      const stateVector = FbsState.createDataVector(builder, state);
       FbsContractInstanceId.endContractInstanceId(builder);
       FbsState.startState(builder);
-      const stateVector = FbsState.createDataVector(builder, state);
       FbsState.createState(builder, stateVector);
       const stateOffset = FbsState.endState(builder);
 
@@ -1051,21 +1083,20 @@ export class FlatbuffersClientRequest {
       );
       return FbsUpdateData.endUpdateData(builder);
     } else {
-      // handle { relatedTo: ContractInstanceId; state: State; delta: StateDelta }
       const { relatedTo, state, delta } = updateData;
-      FbsContractInstanceId.startContractInstanceId(builder);
+
       const contractInstanceVector = FbsContractInstanceId.createDataVector(builder, relatedTo);
+      FbsContractInstanceId.startContractInstanceId(builder);
       FbsContractInstanceId.addData(builder, contractInstanceVector);
       const contractInstanceOffset = FbsContractInstanceId.endContractInstanceId(builder);
 
-      FbsContractInstanceId.endContractInstanceId(builder);
-      FbsState.startState(builder);
       const stateVector = FbsState.createDataVector(builder, state);
+      FbsState.startState(builder);
       FbsState.createState(builder, stateVector);
       const stateOffset = FbsState.endState(builder);
 
-      FbsStateDelta.startStateDelta(builder);
       const deltaVector = FbsStateDelta.createDataVector(builder, delta);
+      FbsStateDelta.startStateDelta(builder);
       FbsStateDelta.createStateDelta(builder, deltaVector);
       const deltaOffset = FbsStateDelta.endStateDelta(builder);
 
