@@ -23,8 +23,8 @@
     "test": "jest",
     "build": "tsc",
     "package": "./package.sh",
-    "flatc_client_request": "bash -c \"flatc --ts --gen-object-api -o ./src ../../schemas/flatbuffers/client_request.fbs\"",
-    "flatc_host_response": "bash -c \"flatc --ts --gen-object-api -o ./src ../../schemas/flatbuffers/host_response.fbs\""
+    "flatc_client_request": "bash -c \"flatc --ts --ts-flat-files -o ./src ../../schemas/flatbuffers/client_request.fbs\"",
+    "flatc_host_response": "bash -c \"flatc --ts --ts-flat-files -o ./src ../../schemas/flatbuffers/host_response.fbs\""
   },
   "license": "MIT+APACHE-2.0",
   "homepage": "https://github.com/freenet/locutus",

@@ -1,7 +1,7 @@
 import {decode} from "@msgpack/msgpack";
 import base58 from "bs58";
 import * as flatbuffers from "flatbuffers";
-// @ts-nocheck
+// @ts-ignore
 import {
   Update,
   ContractRequest,
