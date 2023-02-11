@@ -1,0 +1,144 @@
+namespace schemas.client;
+
+table ContractInstanceId {
+    data:[ubyte];
+}
+
+table Key {
+  instance:ContractInstanceId;
+  code:[ubyte];
+}
+
+table ContractV1 {
+  key:Key;
+  data:[ubyte];
+  parameters:[ubyte];
+  version:string;
+}
+
+union WasmContract {
+  ContractV1
+}
+
+table ContractContainer {
+  contract:WasmContract;
+}
+
+table State {
+  data:[ubyte];
+}
+
+table StateDelta {
+  data:[ubyte];
+}
+
+table StateSummary {
+  data: [ubyte];
+}
+
+table StateUpdate {
+  state:State;
+}
+
+table DeltaUpdate {
+  delta:StateDelta;
+}
+
+table StateDeltaUpdate {
+  state:State;
+  delta:StateDelta;
+}
+
+table StateWithContractInstanceUpdate {
+  related_to:ContractInstanceId;
+  state:State;
+}
+
+table DeltaWithContractInstanceUpdate {
+  related_to:ContractInstanceId;
+  delta:StateDelta;
+}
+
+table StateDeltaWithContractInstanceUpdate {
+  related_to:ContractInstanceId;
+  state:State;
+  delta:StateDelta;
+}
+
+union UpdateDataType {
+  StateUpdate,
+  DeltaUpdate,
+  StateDeltaUpdate,
+  StateWithContractInstanceUpdate,
+  DeltaWithContractInstanceUpdate,
+  StateDeltaWithContractInstanceUpdate
+}
+
+table UpdateData {
+    update_data: UpdateDataType;
+}
+
+table RelatedContract {
+  instance_id:ContractInstanceId;
+  state:State;
+}
+
+table RelatedContracts {
+  contracts:[RelatedContract];
+}
+
+table Put {
+  container:ContractContainer;
+  state:State;
+  related_contracts:RelatedContracts;
+}
+
+table Update {
+  key:Key;
+  data:UpdateData;
+}
+
+table Get {
+  key:Key;
+  fetch_contract:bool;
+}
+
+table Subscribe {
+  key:Key;
+}
+
+union ContractRequestType {
+  Put,
+  Update,
+  Get,
+  Subscribe
+}
+
+table FbsContractRequest {
+  contract_request: ContractRequestType;
+}
+
+table FbsComponentRequest {
+  component_request: [ubyte];
+}
+
+table FbsGenerateRandData {
+  bytes: int;
+}
+
+table FbsDisconnect {
+  cause:string;
+}
+
+union ClientRequestType {
+    FbsContractRequest,
+    FbsComponentRequest,
+    FbsGenerateRandData,
+    FbsDisconnect
+}
+
+table FbsClientRequest {
+    client_request: ClientRequestType(required);
+}
+
+root_type FbsClientRequest;

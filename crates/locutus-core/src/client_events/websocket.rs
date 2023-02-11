@@ -204,8 +204,8 @@ async fn new_request(
     let msg = match result {
         Some(Ok(msg)) if msg.is_binary() => {
             let data = msg.into_bytes();
-            let deserialized: ClientRequest = match ContractRequest::try_decode(&data) {
-                Ok(m) => m.into(),
+            let deserialized: ClientRequest = match ClientRequest::try_decode(&data) {
+                Ok(m) => m,
                 Err(e) => {
                     let _ = request_sender
                         .send(

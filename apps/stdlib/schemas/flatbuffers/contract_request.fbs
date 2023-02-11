@@ -1,0 +1,53 @@
+include "common_definitions.fbs";
+
+namespace flatbuffers.ContractRequest;
+
+table RelatedContract {
+  instance_id:CommonDefinitions.ContractInstanceId;
+  state:CommonDefinitions.State;
+}
+
+table RelatedContracts {
+  contracts:[RelatedContract];
+}
+
+table Put {
+  container:CommonDefinitions.ContractContainer;
+  state:CommonDefinitions.State;
+  related_contracts:RelatedContracts;
+}
+
+table Update {
+  key:CommonDefinitions.Key;
+  data:CommonDefinitions.UpdateData;
+}
+
+table Get {
+  key:CommonDefinitions.Key;
+  fetch_contract:bool;
+}
+
+table Subscribe {
+  key:CommonDefinitions.Key;
+}
+
+table Disconnect {
+  cause:string;
+}
+
+table GenerateRandData {
+    bytes: int;
+}
+
+union ContractRequestType {
+  Put,
+  Update,
+  Get,
+  Subscribe
+}
+
+table ContractRequest {
+    request: ContractRequestType(required);
+}
+
+root_type ContractRequest;

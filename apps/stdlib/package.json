@@ -9,6 +9,7 @@
   ],
   "dependencies": {
     "@msgpack/msgpack": "^2.7.2",
+    "flatbuffers": "^22.12.6",
     "bs58": "^5.0.0"
   },
   "devDependencies": {

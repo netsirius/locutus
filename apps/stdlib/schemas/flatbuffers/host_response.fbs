@@ -1,0 +1,41 @@
+include "common_definitions.fbs";
+
+namespace HostResponseMessage;
+
+table HostError {
+  cause: string;
+}
+
+table PutResponse {
+  key: CommonDefinitions.Key;
+}
+
+table UpdateResponse {
+  key: CommonDefinitions.Key;
+  summary: CommonDefinitions.StateSummary;
+}
+
+table GetResponse {
+  key: CommonDefinitions.Key;
+  contract: CommonDefinitions.ContractContainer;
+  state: CommonDefinitions.State;
+}
+
+table UpdateNotification {
+  key: CommonDefinitions.Key;
+  update: CommonDefinitions.UpdateData;
+}
+
+union Response {
+  HostError,
+  PutResponse,
+  UpdateResponse,
+  GetResponse,
+  UpdateNotification
+}
+
+table HostResponse {
+  response:Response;
+}
+
+root_type HostResponse;

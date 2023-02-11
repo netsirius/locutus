@@ -8,8 +8,10 @@ use std::sync::Arc;
 use byteorder::{BigEndian, ReadBytesExt};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
+use crate::client_request_generated::schemas::client::{
+    ContractContainer as FbsContractContainer, WasmContract,
+};
 use crate::prelude::WrappedContract;
 use crate::{
     contract_interface::ContractKey,
@@ -102,41 +104,30 @@ impl<'a> TryFrom<(&'a Path, Parameters<'static>)> for ContractContainer {
     }
 }
 
-impl TryFromTsStd<&rmpv::Value> for ContractContainer {
-    fn try_decode(value: &rmpv::Value) -> Result<Self, WsApiError> {
-        let container_map: HashMap<&str, &rmpv::Value> = match value.as_map() {
-            Some(map_value) => HashMap::from_iter(
-                map_value
-                    .iter()
-                    .map(|(key, val)| (key.as_str().unwrap(), val)),
-            ),
-            _ => {
-                return Err(WsApiError::MsgpackDecodeError {
-                    cause: "Failed decoding ContractContainer, input value is not a map"
-                        .to_string(),
-                })
-            }
-        };
-
-        let container_version = match container_map.get("version") {
-            Some(version_value) => (*version_value).as_str().unwrap(),
-            _ => {
-                return Err(WsApiError::MsgpackDecodeError {
-                    cause: "Failed decoding ContractContainer, version not found".to_string(),
-                })
-            }
-        };
-
-        match container_version {
-            "V1" => {
-                let contract = WrappedContract::try_decode(value).map_err(|e| {
-                    WsApiError::MsgpackDecodeError {
-                        cause: format!("{e}"),
+impl<'a> TryFromTsStd<&'a Option<FbsContractContainer<'a>>> for ContractContainer {
+    fn try_decode(value: &'a Option<FbsContractContainer>) -> Result<Self, WsApiError> {
+        match value {
+            Some(container) => match container.contract_type() {
+                WasmContract::ContractV1 => {
+                    let contract = container.contract_as_contract_v1().unwrap();
+                    let x = contract.version().unwrap();
+                    match x {
+                        "V1" => {
+                            let contract = WrappedContract::try_decode(&contract).map_err(|e| {
+                                WsApiError::FlatbufferDecodeError {
+                                    cause: format!("{e}"),
+                                }
+                            })?;
+                            Ok(ContractContainer::Wasm(WasmAPIVersion::V1(contract)))
+                        }
+                        _ => unreachable!(),
                     }
-                })?;
-                Ok(ContractContainer::Wasm(WasmAPIVersion::V1(contract)))
-            }
-            _ => unreachable!(),
+                }
+                _ => unreachable!(),
+            },
+            _ => Err(WsApiError::FlatbufferDecodeError {
+                cause: "Failed decoding ContractContainer, input value is not a map".to_string(),
+            }),
         }
     }
 }

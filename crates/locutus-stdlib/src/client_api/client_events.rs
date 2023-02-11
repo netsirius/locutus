@@ -1,8 +1,11 @@
-use std::{collections::HashMap, fmt::Display, io::Cursor};
+use std::fmt::Display;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
+    client_request_generated::schemas::client::{
+        root_as_fbs_client_request, ClientRequestType, ContractRequestType, FbsContractRequest,
+    },
     component_interface::{Component, ComponentKey, InboundComponentMsg, OutboundComponentMsg},
     prelude::{
         ContractKey, RelatedContracts, StateSummary, TryFromTsStd, UpdateData, WrappedState,
@@ -157,64 +160,70 @@ impl<'a> From<ContractRequest<'a>> for ClientRequest<'a> {
     }
 }
 
-/// Deserializes a `ContractRequest` from a MessagePack encoded request.
-impl<'a> TryFromTsStd<&[u8]> for ContractRequest<'a> {
+impl<'a> TryFromTsStd<&[u8]> for ClientRequest<'a> {
     fn try_decode(msg: &[u8]) -> Result<Self, WsApiError> {
-        let value = rmpv::decode::read_value(&mut Cursor::new(msg)).map_err(|e| {
-            WsApiError::MsgpackDecodeError {
-                cause: format!("{e}"),
-            }
-        })?;
-
-        let req: ContractRequest = {
-            if value.is_map() {
-                let value_map: HashMap<&str, &rmpv::Value> = HashMap::from_iter(
-                    value
-                        .as_map()
-                        .unwrap()
-                        .iter()
-                        .map(|(key, val)| (key.as_str().unwrap(), val)),
-                );
-
-                let mut map_keys = Vec::from_iter(value_map.keys().copied());
-                map_keys.sort();
-                match map_keys.as_slice() {
-                    ["container", "relatedContracts", "state"] => {
-                        let contract = value_map.get("container").unwrap();
-                        ContractRequest::Put {
-                            contract: ContractContainer::try_decode(*contract)
-                                .map_err(|err| WsApiError::deserialization(err.to_string()))?,
-                            state: WrappedState::try_decode(*value_map.get("state").unwrap())
-                                .map_err(|err| WsApiError::deserialization(err.to_string()))?,
-                            related_contracts: RelatedContracts::try_decode(
-                                *value_map.get("relatedContracts").unwrap(),
-                            )
-                            .map_err(|err| WsApiError::deserialization(err.to_string()))?
-                            .into_owned(),
-                        }
+        let req: ClientRequest = {
+            match root_as_fbs_client_request(msg) {
+                Ok(r) => match r.client_request_type() {
+                    ClientRequestType::FbsContractRequest => {
+                        let contract_request = r.client_request_as_fbs_contract_request().unwrap();
+                        ContractRequest::try_decode(&contract_request)?.into()
                     }
-                    ["data", "key"] => ContractRequest::Update {
-                        key: ContractKey::try_decode(*value_map.get("key").unwrap())
-                            .map_err(|err| WsApiError::deserialization(err.to_string()))?,
-                        data: UpdateData::try_decode(*value_map.get("data").unwrap())
-                            .map_err(|err| WsApiError::deserialization(err.to_string()))?
-                            .into_owned(),
-                    },
-                    ["fetchContract", "key"] => ContractRequest::Get {
-                        key: ContractKey::try_decode(*value_map.get("key").unwrap())
-                            .map_err(|err| WsApiError::deserialization(err.to_string()))?,
-                        fetch_contract: value_map.get("fetchContract").unwrap().as_bool().unwrap(),
-                    },
-                    ["key"] => ContractRequest::Subscribe {
-                        key: ContractKey::try_decode(*value_map.get("key").unwrap())
-                            .map_err(|err| WsApiError::deserialization(err.to_string()))?,
-                    },
+                    ClientRequestType::FbsComponentRequest => todo!(),
+                    ClientRequestType::FbsGenerateRandData => todo!(),
+                    ClientRequestType::FbsDisconnect => todo!(),
                     _ => unreachable!(),
+                },
+                Err(e) => {
+                    return Err(WsApiError::FlatbufferDecodeError {
+                        cause: format!("{e}"),
+                    })
                 }
-            } else {
-                return Err(WsApiError::MsgpackDecodeError {
-                    cause: "value is not a map".into(),
-                });
+            }
+        };
+
+        Ok(req.into_owned())
+    }
+}
+
+/// Deserializes a `ContractRequest` from a MessagePack encoded request.
+impl<'a> TryFromTsStd<&FbsContractRequest<'a>> for ContractRequest<'a> {
+    fn try_decode(request: &FbsContractRequest) -> Result<Self, WsApiError> {
+        let req: ContractRequest = {
+            match request.contract_request_type() {
+                ContractRequestType::Get => {
+                    let get = request.contract_request_as_get().unwrap();
+                    let key = ContractKey::try_decode(&get.key())?;
+                    let fetch_contract = get.fetch_contract();
+                    ContractRequest::Get {
+                        key,
+                        fetch_contract,
+                    }
+                }
+                ContractRequestType::Put => {
+                    let put = request.contract_request_as_put().unwrap();
+                    let contract = ContractContainer::try_decode(&put.container())?;
+                    let state = WrappedState::try_decode(&put.state())?;
+                    let related_contracts =
+                        RelatedContracts::try_decode(&put.related_contracts())?.into_owned();
+                    ContractRequest::Put {
+                        contract,
+                        state,
+                        related_contracts,
+                    }
+                }
+                ContractRequestType::Update => {
+                    let update = request.contract_request_as_update().unwrap();
+                    let key = ContractKey::try_decode(&update.key())?;
+                    let data = UpdateData::try_decode(&update.data())?.into_owned();
+                    ContractRequest::Update { key, data }
+                }
+                ContractRequestType::Subscribe => {
+                    let subscribe = request.contract_request_as_subscribe().unwrap();
+                    let key = ContractKey::try_decode(&subscribe.key())?;
+                    ContractRequest::Subscribe { key }
+                }
+                _ => unreachable!(),
             }
         };
 

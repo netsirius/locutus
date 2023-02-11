@@ -13,6 +13,9 @@ pub mod buf;
     )
 ))]
 pub mod client_api;
+#[allow(dead_code, unused_imports, clippy::all)]
+#[path = "../../../target/flatbuffers/client_request_generated.rs"]
+pub mod client_request_generated;
 mod component_interface;
 mod contract_interface;
 pub(crate) mod global;

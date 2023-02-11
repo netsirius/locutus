@@ -30,8 +30,12 @@ thiserror = "1"
 tracing = {workspace = true }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
 xz2 = { version = "0.1", optional = true }
+flatbuffers = "22.10.26"
 # internal
 locutus-macros = { path = "../locutus-macros", version = "0.0.3" }
+
+[build-dependencies]
+flatc-rust = "*"
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio = { version = "1", optional = true, features = ["macros", "parking_lot", "rt-multi-thread", "sync", "time"] }
