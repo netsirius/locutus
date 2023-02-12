@@ -15,13 +15,12 @@ pub mod buf;
 pub mod client_api;
 #[allow(dead_code, unused_imports, clippy::all)]
 #[path = "../../../target/flatbuffers/client_request_generated.rs"]
-pub mod client_request_generated;
-pub mod contract_interface;
+mod client_request_generated;
 #[allow(dead_code, unused_imports, clippy::all)]
 #[path = "../../../target/flatbuffers/host_response_generated.rs"]
-pub mod host_response_generated;
-mod component_interface;
+mod host_response_generated;
 mod contract_interface;
+mod component_interface;
 pub(crate) mod global;
 pub mod time;
 mod versioning;
