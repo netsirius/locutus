@@ -1,6 +1,8 @@
 use std::process::Command;
 
 fn main() {
+
+    // TODO try to install flatc from https://github.com/google/flatbuffers and use it to compile schemas
     let status = Command::new("flatc")
         .arg("--rust")
         .arg("--gen-object-api")

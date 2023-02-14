@@ -2,14 +2,7 @@ use std::fmt::Display;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::host_response_generated::schemas::host::{
-    ContractContainerArgs, ContractResponseArgs, ContractResponseType, ContractV1Args,
-    DeltaUpdateArgs, DeltaWithContractInstanceUpdateArgs, GetResponseArgs, HostResponseArgs,
-    HostResponseType, KeyArgs, PutResponseArgs, StateArgs, StateDeltaArgs, StateDeltaUpdateArgs,
-    StateDeltaWithContractInstanceUpdateArgs, StateSummaryArgs, StateUpdateArgs,
-    StateWithContractInstanceUpdateArgs, UpdateDataArgs, UpdateDataType, UpdateNotificationArgs,
-    UpdateResponseArgs,
-};
+use crate::host_response_generated::schemas::host::{ContractContainerArgs, ContractContainerBuilder, ContractInstanceIdBuilder, ContractResponseArgs, ContractResponseBuilder, ContractResponseType, ContractV1Args, ContractV1Builder, DeltaUpdateArgs, DeltaUpdateBuilder, DeltaWithContractInstanceUpdateArgs, DeltaWithContractInstanceUpdateBuilder, GetResponseArgs, GetResponseBuilder, HostResponseArgs, HostResponseBuilder, HostResponseType, KeyArgs, KeyBuilder, PutResponseArgs, PutResponseBuilder, PutResponseT, StateArgs, StateBuilder, StateDeltaArgs, StateDeltaBuilder, StateDeltaUpdateArgs, StateDeltaUpdateBuilder, StateDeltaWithContractInstanceUpdateArgs, StateDeltaWithContractInstanceUpdateBuilder, StateSummaryArgs, StateSummaryBuilder, StateUpdateArgs, StateUpdateBuilder, StateWithContractInstanceUpdateArgs, StateWithContractInstanceUpdateBuilder, UpdateDataArgs, UpdateDataBuilder, UpdateDataType, UpdateNotificationArgs, UpdateNotificationBuilder, UpdateResponseArgs, UpdateResponseBuilder};
 use crate::prelude::ContractContainer::Wasm;
 use crate::prelude::UpdateData::{
     Delta, RelatedDelta, RelatedState, RelatedStateAndDelta, State, StateAndDelta,
@@ -41,6 +34,7 @@ use crate::{
     },
     versioning::ContractContainer,
 };
+use crate::client_api::ContractResponse::PutResponse;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientError {
@@ -373,369 +367,273 @@ impl HostResponse {
             HostResponse::ContractResponse(res) => match res {
                 ContractResponse::PutResponse { key } => {
                     let data = builder.create_vector(&key.bytes());
-                    let instance = FbsContractInstanceId::create(
-                        &mut builder,
-                        &ContractInstanceIdArgs { data: Some(data) },
-                    );
-                    let key = FbsKey::create(
-                        &mut builder,
-                        &KeyArgs {
-                            instance: Some(instance),
-                            code: None,
-                        },
-                    );
-                    let put =
-                        FbsPutResponse::create(&mut builder, &PutResponseArgs { key: Some(key) });
-                    let put_response = FbsContractResponse::create(
-                        &mut builder,
-                        &ContractResponseArgs {
-                            contract_response_type: ContractResponseType::PutResponse,
-                            contract_response: Some(put.as_union_value()),
-                        },
-                    );
-                    let host_response = FbsHostResponse::create(
-                        &mut builder,
-                        &HostResponseArgs {
-                            response_type: HostResponseType::ContractResponse,
-                            response: Some(put_response.as_union_value()),
-                        },
-                    );
-                    builder.finish(host_response, None);
+                    let mut instance_builder = ContractInstanceIdBuilder::new(&mut builder);
+                    instance_builder.add_data(data);
+                    let instance_offset = instance_builder.finish();
+
+                    let mut key_builder = KeyBuilder::new(&mut builder);
+                    key_builder.add_instance(instance_offset);
+                    let key_offset = key_builder.finish();
+
+                    let mut put_builder = PutResponseBuilder::new(&mut builder);
+                    put_builder.add_key(key_offset);
+                    let put_offset = put_builder.finish();
+
+                    let mut response_builder = HostResponseBuilder::new(&mut builder);
+                    response_builder.add_response(put_offset.as_union_value());
+                    response_builder.add_response_type(HostResponseType::ContractResponse);
+                    let response_offset = response_builder.finish();
+
+                    builder.finish(response_offset, None);
                     builder.finished_data().to_vec()
                 }
                 ContractResponse::UpdateResponse { key, summary } => {
                     let data = builder.create_vector(&key.bytes());
-                    let instance = FbsContractInstanceId::create(
-                        &mut builder,
-                        &ContractInstanceIdArgs { data: Some(data) },
-                    );
-                    let key = FbsKey::create(
-                        &mut builder,
-                        &KeyArgs {
-                            instance: Some(instance),
-                            code: None,
-                        },
-                    );
+                    let mut instance_builder = ContractInstanceIdBuilder::new(&mut builder);
+                    instance_builder.add_data(data);
+                    let instance_offset = instance_builder.finish();
+
+                    let mut key_builder = KeyBuilder::new(&mut builder);
+                    key_builder.add_instance(instance_offset);
+                    let key_offset = key_builder.finish();
+
                     let data = builder.create_vector(&summary.into_bytes());
-                    let summary = FbsStateSummary::create(
-                        &mut builder,
-                        &StateSummaryArgs { data: Some(data) },
-                    );
-                    let update = FbsUpdateResponse::create(
-                        &mut builder,
-                        &UpdateResponseArgs {
-                            key: Some(key),
-                            summary: Some(summary),
-                        },
-                    );
-                    let update_response = FbsContractResponse::create(
-                        &mut builder,
-                        &ContractResponseArgs {
-                            contract_response_type: ContractResponseType::UpdateResponse,
-                            contract_response: Some(update.as_union_value()),
-                        },
-                    );
-                    let host_response = FbsHostResponse::create(
-                        &mut builder,
-                        &HostResponseArgs {
-                            response_type: HostResponseType::ContractResponse,
-                            response: Some(update_response.as_union_value()),
-                        },
-                    );
-                    builder.finish(host_response, None);
+                    let mut summary_builder = StateSummaryBuilder::new(&mut builder);
+                    summary_builder.add_data(data);
+                    let summary_offset = summary_builder.finish();
+
+                    let mut update_response_builder = UpdateResponseBuilder::new(&mut builder);
+                    update_response_builder.add_key(key_offset);
+                    update_response_builder.add_summary(summary_offset);
+                    let update_response_offset = update_response_builder.finish();
+
+                    let mut contract_response_builder = ContractResponseBuilder::new(&mut builder);
+                    contract_response_builder.add_contract_response(update_response_offset.as_union_value());
+                    contract_response_builder.add_contract_response_type(ContractResponseType::UpdateResponse);
+                    let contract_response_offset = contract_response_builder.finish();
+
+                    let mut host_response_builder = HostResponseBuilder::new(&mut builder);
+                    host_response_builder.add_response(contract_response_offset.as_union_value());
+                    host_response_builder.add_response_type(HostResponseType::ContractResponse);
+                    let host_response_offset = host_response_builder.finish();
+
+                    builder.finish(host_response_offset, None);
                     builder.finished_data().to_vec()
                 }
-                ContractResponse::GetResponse { state, contract } => {
-                    let state_data = builder.create_vector(&state.to_vec());
-                    let state = FbsState::create(
-                        &mut builder,
-                        &StateArgs {
-                            data: Some(state_data),
-                        },
-                    );
+                ContractResponse::GetResponse { state, contract } => {let state_data = builder.create_vector(&state.to_vec());
+                    let mut state_builder = StateBuilder::new(&mut builder);
+                    state_builder.add_data(state_data);
+                    let state_offset = state_builder.finish();
+
                     let contract = contract.unwrap();
                     let data = builder.create_vector(&contract.key().bytes());
-                    let instance = FbsContractInstanceId::create(
-                        &mut builder,
-                        &ContractInstanceIdArgs { data: Some(data) },
-                    );
-                    let key = FbsKey::create(
-                        &mut builder,
-                        &KeyArgs {
-                            instance: Some(instance),
-                            code: None,
-                        },
-                    );
+                    let mut instance_builder = ContractInstanceIdBuilder::new(&mut builder);
+                    instance_builder.add_data(data);
+                    let instance_offset = instance_builder.finish();
+
+                    let mut key_builder = KeyBuilder::new(&mut builder);
+                    key_builder.add_instance(instance_offset);
+                    let key_offset = key_builder.finish();
+
                     let contract_data = builder.create_vector(&contract.data());
                     let contract_params = builder.create_vector(&contract.params().into_bytes());
                     let contract_version = builder.create_string(&contract.version());
-                    let contract = match contract {
-                        Wasm(WasmAPIVersion::V1(..)) => FbsContractV1::create(
-                            &mut builder,
-                            &ContractV1Args {
-                                key: Some(key),
-                                data: Some(contract_data),
-                                parameters: Some(contract_params),
-                                version: Some(contract_version),
-                            },
-                        ),
+
+                    let contract_builder = match contract {
+                        Wasm(WasmAPIVersion::V1(..)) => {
+                            let mut contract_v1_builder = ContractV1Builder::new(&mut builder);
+                            contract_v1_builder.add_key(key_offset);
+                            contract_v1_builder.add_data(contract_data);
+                            contract_v1_builder.add_parameters(contract_params);
+                            contract_v1_builder.add_version(contract_version);
+                            contract_v1_builder
+                        }
                     };
-                    let container = FbsContractContainer::create(
-                        &mut builder,
-                        &ContractContainerArgs {
-                            contract_type: FbsWasmContract::ContractV1,
-                            contract: Some(contract.as_union_value()),
-                        },
-                    );
-                    let get = FbsGetResponse::create(
-                        &mut builder,
-                        &GetResponseArgs {
-                            contract: Some(container),
-                            state: Some(state),
-                        },
-                    );
-                    let get_response = FbsContractResponse::create(
-                        &mut builder,
-                        &ContractResponseArgs {
-                            contract_response_type: ContractResponseType::PutResponse,
-                            contract_response: Some(get.as_union_value()),
-                        },
-                    );
-                    let host_response = FbsHostResponse::create(
-                        &mut builder,
-                        &HostResponseArgs {
-                            response_type: HostResponseType::ContractResponse,
-                            response: Some(get_response.as_union_value()),
-                        },
-                    );
-                    builder.finish(host_response, None);
+                    let contract_offset = contract_builder.finish();
+
+                    let mut container_builder = ContractContainerBuilder::new(&mut builder);
+                    container_builder.add_contract_type(FbsWasmContract::ContractV1);
+                    container_builder.add_contract(contract_offset.as_union_value());
+                    let container_offset = container_builder.finish();
+
+                    let mut get_builder = GetResponseBuilder::new(&mut builder);
+                    get_builder.add_contract(container_offset);
+                    get_builder.add_state(state_offset);
+                    let get_offset = get_builder.finish();
+
+                    let mut contract_response_builder = ContractResponseBuilder::new(&mut builder);
+                    contract_response_builder.add_contract_response_type(ContractResponseType::PutResponse);
+                    contract_response_builder.add_contract_response(get_offset.as_union_value());
+                    let contract_response_offset = contract_response_builder.finish();
+
+                    let mut response_builder = HostResponseBuilder::new(&mut builder);
+                    response_builder.add_response(contract_response_offset.as_union_value());
+                    response_builder.add_response_type(HostResponseType::ContractResponse);
+                    let response_offset = response_builder.finish();
+
+                    builder.finish(response_offset, None);
                     builder.finished_data().to_vec()
                 }
                 ContractResponse::UpdateNotification { key, update } => {
                     let data = builder.create_vector(&key.bytes());
-                    let instance = FbsContractInstanceId::create(
-                        &mut builder,
-                        &ContractInstanceIdArgs { data: Some(data) },
-                    );
-                    let key = FbsKey::create(
-                        &mut builder,
-                        &KeyArgs {
-                            instance: Some(instance),
-                            code: None,
-                        },
-                    );
+                    let mut instance_builder = ContractInstanceIdBuilder::new(&mut builder);
+                    instance_builder.add_data(data);
+                    let instance_offset = instance_builder.finish();
+
+                    let mut key_builder = KeyBuilder::new(&mut builder);
+                    key_builder.add_instance(instance_offset);
+                    let key_offset = key_builder.finish();
 
                     let update_data = match update {
                         State(state) => {
                             let state_data = builder.create_vector(&state.into_bytes());
-                            let state = FbsState::create(
-                                &mut builder,
-                                &StateArgs {
-                                    data: Some(state_data),
-                                },
-                            );
-                            let state = FbsStateUpdate::create(
-                                &mut builder,
-                                &StateUpdateArgs { state: Some(state) },
-                            );
+                            let mut state_builder = StateBuilder::new(&mut builder);
+                            state_builder.add_data(state_data);
+                            let state_offset = state_builder.finish();
 
-                            // Create the update data
-                            FbsUpdateData::create(
-                                &mut builder,
-                                &UpdateDataArgs {
-                                    update_data_type: UpdateDataType::StateUpdate,
-                                    update_data: Some(state.as_union_value()),
-                                },
-                            )
+                            let mut state_update_builder = StateUpdateBuilder::new(&mut builder);
+                            state_update_builder.add_state(state_offset);
+                            let state_update_offset = state_update_builder.finish();
+
+                            let mut update_data_builder = UpdateDataBuilder::new(&mut builder);
+                            update_data_builder.add_update_data_type(UpdateDataType::StateUpdate);
+                            update_data_builder.add_update_data(state_update_offset.as_union_value());
+                            let update_data_offset = update_data_builder.finish();
+                            update_data_offset
                         }
                         Delta(delta) => {
                             let delta_data = builder.create_vector(&delta.into_bytes());
-                            let delta = FbsStateDelta::create(
-                                &mut builder,
-                                &StateDeltaArgs {
-                                    data: Some(delta_data),
-                                },
-                            );
-                            let update = FbsDeltaUpdate::create(
-                                &mut builder,
-                                &DeltaUpdateArgs { delta: Some(delta) },
-                            );
+                            let mut delta_builder = StateDeltaBuilder::new(&mut builder);
+                            delta_builder.add_data(delta_data);
+                            let delta_offset = delta_builder.finish();
 
-                            // Create the update data
-                            FbsUpdateData::create(
-                                &mut builder,
-                                &UpdateDataArgs {
-                                    update_data_type: UpdateDataType::DeltaUpdate,
-                                    update_data: Some(update.as_union_value()),
-                                },
-                            )
+                            let mut update_builder = DeltaUpdateBuilder::new(&mut builder);
+                            update_builder.add_delta(delta_offset);
+                            let update_offset = update_builder.finish();
+
+                            let mut update_data_builder = UpdateDataBuilder::new(&mut builder);
+                            update_data_builder.add_update_data_type(UpdateDataType::DeltaUpdate);
+                            update_data_builder.add_update_data(update_offset.as_union_value());
+                            let update_data_offset = update_data_builder.finish();
+                            update_data_offset
                         }
                         StateAndDelta { state, delta } => {
                             let state_data = builder.create_vector(&state.into_bytes());
-                            let state = FbsState::create(
-                                &mut builder,
-                                &StateArgs {
-                                    data: Some(state_data),
-                                },
-                            );
+                            let mut state_builder = StateBuilder::new(&mut builder);
+                            state_builder.add_data(state_data);
+                            let state_offset = state_builder.finish();
+
                             let delta_data = builder.create_vector(&delta.into_bytes());
-                            let delta = FbsStateDelta::create(
-                                &mut builder,
-                                &StateDeltaArgs {
-                                    data: Some(delta_data),
-                                },
-                            );
+                            let mut delta_builder = StateDeltaBuilder::new(&mut builder);
+                            delta_builder.add_data(delta_data);
+                            let delta_offset = delta_builder.finish();
 
-                            let update = FbsStateDeltaUpdate::create(
-                                &mut builder,
-                                &StateDeltaUpdateArgs {
-                                    state: Some(state),
-                                    delta: Some(delta),
-                                },
-                            );
+                            let mut update_builder = StateDeltaUpdateBuilder::new(&mut builder);
+                            update_builder.add_state(state_offset);
+                            update_builder.add_delta(delta_offset);
+                            let update_offset = update_builder.finish();
 
-                            // Create the update data
-                            FbsUpdateData::create(
-                                &mut builder,
-                                &UpdateDataArgs {
-                                    update_data_type: UpdateDataType::StateDeltaUpdate,
-                                    update_data: Some(update.as_union_value()),
-                                },
-                            )
+                            let mut update_data_builder = UpdateDataBuilder::new(&mut builder);
+                            update_data_builder.add_update_data_type(UpdateDataType::StateDeltaUpdate);
+                            update_data_builder.add_update_data(update_offset.as_union_value());
+                            let update_data_offset = update_data_builder.finish();
+                            update_data_offset
                         }
                         RelatedState { related_to, state } => {
-                            let data = builder.create_vector(&related_to.as_bytes());
-                            let instance = FbsContractInstanceId::create(
-                                &mut builder,
-                                &ContractInstanceIdArgs { data: Some(data) },
-                            );
-
                             let state_data = builder.create_vector(&state.into_bytes());
-                            let state = FbsState::create(
-                                &mut builder,
-                                &StateArgs {
-                                    data: Some(state_data),
-                                },
-                            );
+                            let mut state_builder = StateBuilder::new(&mut builder);
+                            state_builder.add_data(state_data);
+                            let state_offset = state_builder.finish();
 
-                            let update = FbsStateWithContractInstanceUpdate::create(
-                                &mut builder,
-                                &StateWithContractInstanceUpdateArgs {
-                                    related_to: Some(instance),
-                                    state: Some(state),
-                                },
-                            );
+                            let instance_data = builder.create_vector(&related_to.as_bytes());
+                            let mut instance_builder = ContractInstanceIdBuilder::new(&mut builder);
+                            instance_builder.add_data(instance_data);
+                            let instance_offset = instance_builder.finish();
 
-                            // Create the update data
-                            FbsUpdateData::create(
-                                &mut builder,
-                                &UpdateDataArgs {
-                                    update_data_type: UpdateDataType::StateDeltaUpdate,
-                                    update_data: Some(update.as_union_value()),
-                                },
-                            )
+                            let mut update_builder = StateWithContractInstanceUpdateBuilder::new(&mut builder);
+                            update_builder.add_related_to(instance_offset);
+                            update_builder.add_state(state_offset);
+                            let update_offset = update_builder.finish();
+
+                            let mut update_data_builder = UpdateDataBuilder::new(&mut builder);
+                            update_data_builder.add_update_data_type(UpdateDataType::StateDeltaUpdate);
+                            update_data_builder.add_update_data(update_offset.as_union_value());
+                            let update_data_offset = update_data_builder.finish();
+                            update_data_offset
                         }
                         RelatedDelta { related_to, delta } => {
-                            let data = builder.create_vector(&related_to.as_bytes());
-                            let instance = FbsContractInstanceId::create(
-                                &mut builder,
-                                &ContractInstanceIdArgs { data: Some(data) },
-                            );
+                            let instance_data = builder.create_vector(&related_to.as_bytes());
+                            let mut instance_builder = ContractInstanceIdBuilder::new(&mut builder);
+                            instance_builder.add_data(instance_data);
+                            let instance_offset = instance_builder.finish();
 
                             let delta_data = builder.create_vector(&delta.into_bytes());
-                            let delta = FbsStateDelta::create(
-                                &mut builder,
-                                &StateDeltaArgs {
-                                    data: Some(delta_data),
-                                },
-                            );
+                            let mut delta_builder = StateDeltaBuilder::new(&mut builder);
+                            delta_builder.add_data(delta_data);
+                            let delta_offset = delta_builder.finish();
 
-                            let update = FbsDeltaWithContractInstanceUpdate::create(
-                                &mut builder,
-                                &DeltaWithContractInstanceUpdateArgs {
-                                    related_to: Some(instance),
-                                    delta: Some(delta),
-                                },
-                            );
+                            let mut update_builder = DeltaWithContractInstanceUpdateBuilder::new(&mut builder);
+                            update_builder.add_related_to(instance_offset);
+                            update_builder.add_delta(delta_offset);
+                            let update_offset = update_builder.finish();
 
-                            // Create the update data
-                            FbsUpdateData::create(
-                                &mut builder,
-                                &UpdateDataArgs {
-                                    update_data_type: UpdateDataType::StateDeltaUpdate,
-                                    update_data: Some(update.as_union_value()),
-                                },
-                            )
+                            let mut update_data_builder = UpdateDataBuilder::new(&mut builder);
+                            update_data_builder.add_update_data_type(UpdateDataType::StateDeltaUpdate);
+                            update_data_builder.add_update_data(update_offset.as_union_value());
+                            let update_data_offset = update_data_builder.finish();
+                            update_data_offset
                         }
                         RelatedStateAndDelta {
                             related_to,
                             state,
                             delta,
                         } => {
-                            let data = builder.create_vector(&related_to.as_bytes());
-                            let instance = FbsContractInstanceId::create(
-                                &mut builder,
-                                &ContractInstanceIdArgs { data: Some(data) },
-                            );
+                            let instance_data = builder.create_vector(&related_to.as_bytes());
+                            let mut instance_builder = ContractInstanceIdBuilder::new(&mut builder);
+                            instance_builder.add_data(instance_data);
+                            let instance_offset = instance_builder.finish();
 
                             let state_data = builder.create_vector(&state.into_bytes());
-                            let state = FbsState::create(
-                                &mut builder,
-                                &StateArgs {
-                                    data: Some(state_data),
-                                },
-                            );
+                            let mut state_builder = StateBuilder::new(&mut builder);
+                            state_builder.add_data(state_data);
+                            let state_offset = state_builder.finish();
 
                             let delta_data = builder.create_vector(&delta.into_bytes());
-                            let delta = FbsStateDelta::create(
-                                &mut builder,
-                                &StateDeltaArgs {
-                                    data: Some(delta_data),
-                                },
-                            );
+                            let mut delta_builder = StateDeltaBuilder::new(&mut builder);
+                            delta_builder.add_data(delta_data);
+                            let delta_offset = delta_builder.finish();
 
-                            let update = FbsStateDeltaWithContractInstanceUpdate::create(
-                                &mut builder,
-                                &StateDeltaWithContractInstanceUpdateArgs {
-                                    related_to: Some(instance),
-                                    state: Some(state),
-                                    delta: Some(delta),
-                                },
-                            );
+                            let mut update_builder = StateDeltaWithContractInstanceUpdateBuilder::new(&mut builder);
+                            update_builder.add_related_to(instance_offset);
+                            update_builder.add_state(state_offset);
+                            update_builder.add_delta(delta_offset);
+                            let update_offset = update_builder.finish();
 
-                            // Create the update data
-                            FbsUpdateData::create(
-                                &mut builder,
-                                &UpdateDataArgs {
-                                    update_data_type: UpdateDataType::StateDeltaUpdate,
-                                    update_data: Some(update.as_union_value()),
-                                },
-                            )
+                            let mut update_data_builder = UpdateDataBuilder::new(&mut builder);
+                            update_data_builder.add_update_data_type(UpdateDataType::StateDeltaUpdate);
+                            update_data_builder.add_update_data(update_offset.as_union_value());
+                            let update_data_offset = update_data_builder.finish();
+                            update_data_offset
+
                         }
                     };
 
-                    let update_notification = FbsUpdateNotification::create(
-                        &mut builder,
-                        &UpdateNotificationArgs {
-                            key: Some(key),
-                            update: Some(update_data),
-                        },
-                    );
-                    let put_response = FbsContractResponse::create(
-                        &mut builder,
-                        &ContractResponseArgs {
-                            contract_response_type: ContractResponseType::PutResponse,
-                            contract_response: Some(update_notification.as_union_value()),
-                        },
-                    );
-                    let host_response = FbsHostResponse::create(
-                        &mut builder,
-                        &HostResponseArgs {
-                            response_type: HostResponseType::ContractResponse,
-                            response: Some(put_response.as_union_value()),
-                        },
-                    );
-                    builder.finish(host_response, None);
+                    let mut update_notification = UpdateNotificationBuilder::new(&mut builder);
+                    update_notification.add_key(key_offset);
+                    update_notification.add_update(update_data);
+                    let update_notification_offset = update_notification.finish();
+
+                    let mut put_response_builder = ContractResponseBuilder::new(&mut builder);
+                    put_response_builder.add_contract_response_type(ContractResponseType::PutResponse);
+                    put_response_builder.add_contract_response(update_notification_offset.as_union_value());
+                    let put_response_offset = put_response_builder.finish();
+
+                    let mut host_response_builder = HostResponseBuilder::new(&mut builder);
+                    host_response_builder.add_response_type(HostResponseType::ContractResponse);
+                    host_response_builder.add_response(put_response_offset.as_union_value());
+                    let host_response_offset = host_response_builder.finish();
+
+                    builder.finish(host_response_offset, None);
                     builder.finished_data().to_vec()
                 }
             },
