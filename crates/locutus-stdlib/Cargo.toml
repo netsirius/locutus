@@ -30,7 +30,7 @@ thiserror = "1"
 tracing = {workspace = true }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
 xz2 = { version = "0.1", optional = true }
-flatbuffers = "22.10.26"
+flatbuffers = "23.1.21"
 # internal
 locutus-macros = { path = "../locutus-macros", version = "0.0.3" }
 

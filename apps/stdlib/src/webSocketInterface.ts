@@ -32,6 +32,19 @@ import {
   WasmContract as FbsWasmContract,
 } from "./client_request_generated";
 
+import {
+  HostResponse as FbsHostResponse,
+  ContractResponse as FbsContractResponse,
+  ComponentResponse as FbsComponentResponse,
+  GenerateRandData as FbsGenerateRandData,
+  GetResponse as FbsGetResponse,
+  HostResponseType,
+  PutResponse as FbsPutReponse,
+  UpdateNotification as FbsUpdateNotification,
+  UpdateResponse as FbsUpdateResponse, ContractResponseType,
+  ContractContainer as FbsHostContractContainer,
+} from "./host_response_generated";
+
 const MAX_U8: number = 255;
 const MIN_U8: number = 0;
 
@@ -426,6 +439,16 @@ export interface GetResponse {
   state: State;
 }
 
+// TODO Implement response types as classes to build each type instance from flatbuffers
+// class GetResponse {
+//    public contract: ContractContainer | undefined;
+//    public state: State | undefined;
+//   constructor(_fbsResponse: FbsGetResponse) {
+//     // const key = this.contract()?.contract(new FbsContractContainer()).
+//     // const state_data = this._state()?.dataArray()?.buffer;
+//   }
+// }
+
 /**
  * The response for a state update notification
  * @public
@@ -445,6 +468,51 @@ export interface UpdateNotification {
 function assert(condition: boolean, msg?: string) {
   if (!condition) throw new TypeError(msg);
 }
+
+// TODO Finish to implement this constructor to build HostResponse from flatbuffers
+// export class HostResponse {
+//   /**
+//    * @private
+//    */
+//   private result: Ok | HostError;
+//
+//   /**
+//    * Builds the response from the bytes received via the websocket interface.
+//    * @param bytes - Response data
+//    * @returns The corresponding response type result
+//    * @constructor
+//    */
+//   constructor(bytes: Uint8Array) {
+//     const buf = new flatbuffers.ByteBuffer(bytes);
+//     const hostResponse = FbsHostResponse.getRootAsHostResponse(buf);
+//     switch (hostResponse.responseType()) {
+//       case HostResponseType.ContractResponse:
+//         const contractResponse = hostResponse.response(new FbsContractResponse());
+//         const contractResponseType = contractResponse.contractResponseType();
+//
+//         switch (contractResponseType) {
+//           case ContractResponseType.GetResponse:
+//             let getResponse = contractResponse.contractResponse(new GetResponse());
+//             // const { key, data, parameters, version } = getResponse.
+//             // const wasmContract = contractContainer.contract();
+//             // const contractV1 = wasmContract.ContractV1();
+//             this.result = getResponse;
+//             break;
+//           default:
+//             break;
+//         }
+//         break;
+//       case HostResponseType.ComponentResponse:
+//         this.result = {cause: ""}
+//         break;
+//       case HostResponseType.GenerateRandData:
+//         this.result = {cause: ""}
+//         break;
+//       default:
+//         throw new Error(`Unexpected HostResponse type`);
+//     }
+//   }
+// }
 
 /**
  * A typed response from the host HTTP gateway to requests made via the API.

@@ -121,15 +121,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmake"
-version = "0.1.49"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db34956e100b30725f2eb215f90d4871051239535632f84fea3bc92722c66b7c"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "codespan-reporting"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -349,21 +340,12 @@ dependencies = [
 
 [[package]]
 name = "flatbuffers"
-version = "22.12.6"
+version = "23.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ae1bfc84d904f75e7ef6f8796b020c606a9e8e271e2004c0a74f7edeedba45f"
+checksum = "77f5399c2c9c50ae9418e522842ad362f61ee48b346ac106807bd355a8a7c619"
 dependencies = [
  "bitflags",
  "rustc_version",
-]
-
-[[package]]
-name = "flatc"
-version = "0.2.1+2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cd1884b53f6b05f2faf713c5751dbcae7e08928303b4593ccbe0caa3daae7d4"
-dependencies = [
- "cmake",
 ]
 
 [[package]]
@@ -601,7 +583,6 @@ dependencies = [
  "byteorder",
  "chrono",
  "flatbuffers",
- "flatc",
  "futures",
  "locutus-macros",
  "once_cell",

@@ -34,7 +34,6 @@ use crate::{
     },
     versioning::ContractContainer,
 };
-use crate::client_api::ContractResponse::PutResponse;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientError {
