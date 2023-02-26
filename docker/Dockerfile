@@ -11,6 +11,9 @@ RUN DEBIAN_FRONTEND=noninteractive \
     llvm-13-dev \
     libclang-common-13-dev \
     zlib1g-dev \
+    pkg-config \
+    libssl-dev \
+    clang \
   && apt-get clean \
   && rm -fr /var/lib/apt/lists/*
 
