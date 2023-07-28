@@ -32,7 +32,6 @@ tracing-subscriber = { version = "0.3", features = ["default", "env-filter"] }
 xz2 = { version = "0.1", optional = true }
 # internal
 locutus-macros = { path = "../locutus-macros", version = "0.0.3" }
-https = "1.12.6"
 
 [target.'cfg(any(unix, windows))'.dependencies]
 tokio = { version = "1", optional = true, features = ["macros", "parking_lot", "rt-multi-thread", "sync", "time"] }
